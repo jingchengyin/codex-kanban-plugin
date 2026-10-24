@@ -1,63 +1,144 @@
-import { mkdir, cp, readFile, writeFile, rm } from "node:fs/promises";
+import { mkdir, cp, readFile, readdir, writeFile, rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { build } from "tsup";
 
-const root = resolve(new URL("..", import.meta.url).pathname);
+const root = fileURLToPath(new URL("..", import.meta.url));
 const pkg = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
-const marketplace = resolve(root, "releases/marketplace");
-const plugin = resolve(marketplace, "plugins/codex-taskboard");
+const catalog = JSON.parse(
+  await readFile(resolve(root, ".agents/plugins/marketplace.json"), "utf8"),
+);
+const plugin = resolve(root, "plugins/codex-taskboard");
 await rm(plugin, { recursive: true, force: true });
 await mkdir(plugin, { recursive: true });
 for (const path of [
   ".codex-plugin",
-  ".mcp.json",
   "assets",
-  "dist",
-  "package.json",
-  "package-lock.json",
   "README.md",
   "LICENSE",
   "THIRD_PARTY_NOTICES.md",
-])
+]) {
   await cp(resolve(root, path), resolve(plugin, path), { recursive: true });
-execFileSync(
-  "npm",
-  ["ci", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund"],
-  { cwd: plugin, stdio: "inherit" },
-);
-await rm(resolve(marketplace, ".codex-plugin"), {
-  recursive: true,
-  force: true,
+}
+
+// Bundle dependencies before distribution: plugin installation never runs npm.
+await build({
+  config: false,
+  entry: { index: resolve(root, "server/index.ts") },
+  outDir: resolve(plugin, "runtime/server"),
+  format: ["esm"],
+  outExtension: () => ({ js: ".mjs" }),
+  platform: "node",
+  target: "node22",
+  noExternal: [/.*/],
+  splitting: false,
+  clean: true,
+  removeNodeProtocol: false,
+  banner: {
+    js: 'import { createRequire } from "node:module"; const require = createRequire(import.meta.url);',
+  },
 });
+await cp(resolve(root, "dist/ui"), resolve(plugin, "runtime/ui"), {
+  recursive: true,
+});
+const mcp = JSON.parse(await readFile(resolve(root, ".mcp.json"), "utf8"));
+mcp.mcpServers[pkg.name].args = ["./runtime/server/index.mjs"];
+mcp.mcpServers[pkg.name].cwd = ".";
+await writeFile(
+  resolve(plugin, ".mcp.json"),
+  JSON.stringify(mcp, null, 2) + "\n",
+);
+await writeFile(
+  resolve(plugin, "package.json"),
+  JSON.stringify(
+    {
+      name: pkg.name,
+      version: pkg.version,
+      private: true,
+      type: "module",
+      engines: pkg.engines,
+      scripts: {
+        start: "node runtime/server/index.mjs",
+        "codex-kanban-plugin": pkg.scripts["codex-kanban-plugin"],
+        live: pkg.scripts.live,
+      },
+    },
+    null,
+    2,
+  ) + "\n",
+);
+await mkdir(resolve(plugin, "scripts"), { recursive: true });
+for (const path of ["start-live.mjs", "kanban-launcher.mjs"]) {
+  await cp(resolve(root, "scripts", path), resolve(plugin, "scripts", path));
+}
+
+// Preserve license texts when shipping bundled code without node_modules.
+const lock = JSON.parse(
+  await readFile(resolve(root, "package-lock.json"), "utf8"),
+);
+const licenses = [];
+for (const [path, metadata] of Object.entries(lock.packages)) {
+  if (!path.startsWith("node_modules/") || metadata.dev) continue;
+  let source = resolve(root, path);
+  let files = (await readdir(source, { withFileTypes: true }))
+    .filter(
+      (file) =>
+        file.isFile() &&
+        /^(licen[cs]e|notice|copying|ofl)([._-]|$)/i.test(file.name),
+    )
+    .map((file) => file.name)
+    .sort();
+  const destination = path.replaceAll("node_modules/", "");
+  if (!files.length) {
+    source = resolve(root, "licenses", destination);
+    files = (await readdir(source)).sort();
+  }
+  await mkdir(resolve(plugin, "licenses", destination), { recursive: true });
+  for (const file of files) {
+    await cp(
+      resolve(source, file),
+      resolve(plugin, "licenses", destination, file),
+    );
+  }
+  licenses.push({
+    package: destination,
+    version: metadata.version,
+    license: metadata.license,
+    files,
+  });
+}
+await mkdir(resolve(plugin, "licenses/affectui"), { recursive: true });
+await cp(
+  resolve(root, "ui/vendor/affectui/LICENSE"),
+  resolve(plugin, "licenses/affectui/LICENSE"),
+);
+await writeFile(
+  resolve(plugin, "licenses/index.json"),
+  JSON.stringify(licenses, null, 2) + "\n",
+);
+
+// Retain the existing offline marketplace and ZIP installation options.
+const marketplace = resolve(root, "releases/marketplace");
+const localPlugin = resolve(marketplace, "plugins/codex-taskboard");
+await rm(localPlugin, { recursive: true, force: true });
+await cp(plugin, localPlugin, { recursive: true });
 await mkdir(resolve(marketplace, ".agents/plugins"), { recursive: true });
 await writeFile(
   resolve(marketplace, ".agents/plugins/marketplace.json"),
   JSON.stringify(
     {
+      ...catalog,
       name: "codex-taskboard-local",
       interface: { displayName: "本地对话看板" },
-      plugins: [
-        {
-          name: "codex-taskboard",
-          source: { source: "local", path: "./plugins/codex-taskboard" },
-          category: "Developer Tools",
-        },
-      ],
     },
     null,
     2,
   ) + "\n",
 );
 const zip = resolve(root, `releases/codex-taskboard-${pkg.version}.zip`);
-await mkdir(resolve(plugin, "scripts"), { recursive: true });
-await cp(
-  resolve(root, "scripts/start-live.mjs"),
-  resolve(plugin, "scripts/start-live.mjs"),
-);
-await cp(
-  resolve(root, "scripts/kanban-launcher.mjs"),
-  resolve(plugin, "scripts/kanban-launcher.mjs"),
-);
 await rm(zip, { force: true });
 execFileSync("/usr/bin/zip", ["-qr", zip, "."], { cwd: plugin });
-console.log(`Plugin ZIP: ${zip}\nLocal marketplace: ${marketplace}`);
+console.log(
+  `GitHub plugin: ${plugin}\nPlugin ZIP: ${zip}\nLocal marketplace: ${marketplace}`,
+);

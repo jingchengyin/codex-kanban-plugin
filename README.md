@@ -34,15 +34,42 @@ npm run preview
 
 ## 安装插件
 
+### 从 GitHub 安装
+
+需要本机已安装 Node.js >= 22.13，且 Codex 能从 `PATH` 找到 `node`。仓库已包含市场清单和自包含发行包，安装插件时无需下载 npm 依赖或运行构建命令。
+
+在「添加插件市场」中填写：
+
+| 字段     | 值                                     |
+| -------- | -------------------------------------- |
+| 来源     | `jingchengyin/codex-kanban-plugin`     |
+| Git 引用 | `main`，或留空使用默认分支             |
+| 稀疏路径 | 留空，市场清单和插件发行包需要一起拉取 |
+
+添加市场后，在「Codex Kanban Plugin」中安装「对话看板」。命令行等价操作：
+
+```sh
+codex plugin marketplace add jingchengyin/codex-kanban-plugin --ref main
+codex plugin add codex-taskboard@codex-kanban-plugin
+```
+
+根据当前客户端的插件刷新行为，可能需要重新打开 Codex 后才显示「对话看板」入口。普通启动即可读取本地对话和未读记录；实时运行状态仍需下面的共享后端连接。
+
+### 本地打包与离线安装
+
+在源码仓库根目录运行：
+
 ```sh
 npm run package:plugin
 codex plugin marketplace add ./releases/marketplace
 codex plugin add codex-taskboard@codex-taskboard-local
 ```
 
-打包会生成 `releases/codex-taskboard-0.1.0.zip`，以及包含生产依赖的本地 marketplace。依赖从锁文件安装，包内不包含对话记录、测试证据、截图或 Codex 凭据。根据当前客户端的插件刷新行为，可能需要重新打开 Codex 后才显示「对话看板」入口。
+打包会先构建源码，再生成 `plugins/codex-taskboard/` 自包含发行包、`releases/codex-taskboard-0.1.1.zip` 和本地 marketplace。服务端依赖已内联到 `runtime/server/index.mjs`，页面、字体和样式已内联到 `runtime/ui/index.html`；包内不需要 `node_modules`，不会执行安装脚本。第三方许可原文位于 `licenses/`。包内不包含对话记录、测试证据、截图或 Codex 凭据。
 
-这是本地桌面插件，不是公开目录发布；没有上传数据或提交审核。卸载使用 `codex plugin remove codex-taskboard@codex-taskboard-local`。
+发布更新时，请在源码仓库运行 `npm run package:plugin` 并提交重新生成的 `plugins/codex-taskboard/`。仓库根目录的 `.agents/plugins/marketplace.json` 指向该发行目录，使用 GitHub 安装的用户会从那里获取运行文件。可用 `codex plugin marketplace upgrade codex-kanban-plugin` 刷新市场，并在插件管理中更新或重新安装插件。
+
+这是通过 Git 仓库分发的本地桌面插件，未提交官方公开目录审核。GitHub 安装的卸载命令为 `codex plugin remove codex-taskboard@codex-kanban-plugin`；本地安装使用 `codex plugin remove codex-taskboard@codex-taskboard-local`。
 
 ## 接入实时状态
 
@@ -53,6 +80,8 @@ codex plugin add codex-taskboard@codex-taskboard-local
 ```sh
 npm run codex-kanban-plugin
 ```
+
+通过 GitHub 安装后，运行文件也包含此命令；在终端进入插件安装目录后执行即可。本发行版默认安装位置为 `~/.codex/plugins/cache/codex-kanban-plugin/codex-taskboard/0.1.1/`，实际路径以安装命令输出中的 `installedPath` 为准。源码仓库和安装目录均无需额外安装依赖来运行共享启动命令。
 
 命令会启动共享后端，并自动以共享模式打开 Codex。如果 Codex 已打开，终端会等待你按 `⌘Q` 完全退出，然后自动继续启动，无需复制第二条命令。打开「对话看板」，等待「实时已连接」。`npm run live` 保留为兼容别名。
 
@@ -69,12 +98,12 @@ npm run codex-kanban-plugin
 
 可选环境变量：
 
-| 变量 | 默认 | 用途 |
-| --- | --- | --- |
-| `CODEX_HOME` | `~/.codex` | 本机对话索引与未读数据目录 |
-| `TASKBOARD_WS_URL` | `ws://127.0.0.1:19429` | 已存在的共享状态后端，仅接受无凭据 loopback 地址 |
-| `TASKBOARD_PORT` | `4318` | 浏览器预览端口 |
-| `TASKBOARD_CODEX_CLI` | 当前 macOS 应用的随附 CLI | 共享启动命令使用的官方后端程序 |
+| 变量                  | 默认                      | 用途                                             |
+| --------------------- | ------------------------- | ------------------------------------------------ |
+| `CODEX_HOME`          | `~/.codex`                | 本机对话索引与未读数据目录                       |
+| `TASKBOARD_WS_URL`    | `ws://127.0.0.1:19429`    | 已存在的共享状态后端，仅接受无凭据 loopback 地址 |
+| `TASKBOARD_PORT`      | `4318`                    | 浏览器预览端口                                   |
+| `TASKBOARD_CODEX_CLI` | 当前 macOS 应用的随附 CLI | 共享启动命令使用的官方后端程序                   |
 
 ## 数据边界与状态含义
 
@@ -94,6 +123,8 @@ python3 -m unittest discover -s tests -v
 ```
 
 自动测试包括临时 SQLite 索引、真实本机测试 WebSocket、审批不代答、失败恢复、断线快照失效、未读身份隔离，以及打包后真实 MCP stdio 的 tools/list、resources/read、tools/call。测试 WebSocket 的待确认/异常样本是受控协议样本，不等于已经在用户桌面实测这些状态。
+
+运行 MCP 测试前先执行 `npm run package:plugin`。同一组 MCP 检查也会把 GitHub 发行目录复制到仓库之外、含空格的临时路径，从不含依赖的目录启动，验证安装包可以独立运行。
 
 macOS 安装了随附 CLI 时，还会通过 Python 标准库创建真实终端，验证官方后端启动、WebSocket 连接、等待现有桌面退出后继续启动、退出后自动清理、已有后端复用、重复命令与端口冲突。测试使用临时数据目录和随机端口，桌面启动及退出由测试替身模拟，不退出或重开用户的 Codex。
 

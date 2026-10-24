@@ -1,0 +1,20 @@
+{
+  "name": "codex-kanban-plugin",
+  "interface": {
+    "displayName": "Codex Kanban Plugin"
+  },
+  "plugins": [
+    {
+      "name": "codex-taskboard",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex-taskboard"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_USE"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

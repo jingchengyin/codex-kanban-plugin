@@ -1,6 +1,6 @@
 {
   "name": "codex-taskboard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -13,7 +13,7 @@
     "preview": "node dist/server/preview.js",
     "test": "tsx --test tests/*.test.ts",
     "check": "tsc --noEmit",
-    "package:plugin": "node scripts/package-plugin.mjs",
+    "package:plugin": "npm run build && node scripts/package-plugin.mjs",
     "codex-kanban-plugin": "node scripts/start-live.mjs",
     "live": "npm run codex-kanban-plugin"
   },

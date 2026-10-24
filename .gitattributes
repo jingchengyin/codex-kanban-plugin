@@ -1,0 +1,3 @@
+# Generated bundles and upstream license texts are preserved as distributed.
+plugins/codex-taskboard/runtime/** linguist-generated=true -whitespace
+plugins/codex-taskboard/licenses/** linguist-vendored=true -whitespace

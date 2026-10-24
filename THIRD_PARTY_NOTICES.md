@@ -29,5 +29,11 @@ SOFTWARE.
 
 React and Lucide use MIT licenses. Manrope and Newsreader fonts use the SIL
 Open Font License. MCP SDK and OpenAI MCP Extensions use Apache-2.0. Their
-original licenses are included with their packages under node_modules in the
-distributable; the built HTML embeds the font assets for offline rendering.
+original license texts are included under licenses/ in the self-contained
+distributable, with package versions in licenses/index.json. No node_modules
+directory is needed at installation. The built HTML embeds the font assets
+for offline rendering.
+
+The license for @cfworker/json-schema is preserved from its upstream monorepo:
+https://github.com/cfworker/cfworker/blob/main/LICENSE.md . The source copy is
+under licenses/@cfworker/json-schema/LICENSE because the npm package omits it.

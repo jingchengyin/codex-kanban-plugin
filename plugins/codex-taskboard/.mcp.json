@@ -1,0 +1,19 @@
+{
+  "mcpServers": {
+    "codex-taskboard": {
+      "command": "node",
+      "args": [
+        "./runtime/server/index.mjs"
+      ],
+      "cwd": ".",
+      "env_vars": [
+        "HOME",
+        "PATH",
+        "CODEX_HOME",
+        "TASKBOARD_WS_URL"
+      ],
+      "startup_timeout_sec": 20,
+      "tool_timeout_sec": 15
+    }
+  }
+}
