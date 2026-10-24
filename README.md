@@ -1,139 +1,55 @@
-# Codex Taskboard · 对话看板
+# Codex Kanban Plugin
 
-本机 Codex 插件，使用 React 19 和 affectUI。提供全局侧边栏入口、对话侧面板入口和独立浏览器预览。读取真实本地数据，不内置演示对话。
+[English](README.md) | [简体中文](README.zh.md)
 
-## 功能
+A kanban board for your local Codex conversations.
 
-- 右上角 Language 支持 EN / CN 切换，默认英文，并在本地记住选择；界面文案和时间格式跟随语言切换，对话内容保留原文。
-- 默认五列看板：需要你处理、正在运行、未读、暂时空闲、执行异常。「状态待同步」列默认隐藏，可通过运行状态筛选显示。每条对话只出现在一列；需要处理、运行中或异常优先，其余未读对话进入未读列，已读后按运行状态归列。
-- 顶部仅保留「全部对话」和「需要关注」两个范围。「需要关注」包含待处理、未读及执行异常的对话，只展示这三类分栏；同一对话只计数一次，待处理及异常优先，其余未读对话（包括运行中）进入未读列。搜索和筛选继续生效。
-- 界面仅保留看板与搜索、筛选、连接设置、刷新和排序；支持运行状态、项目、阅读状态及对话类型筛选。选择运行状态后仅显示对应列，符合所选运行状态的未读对话仍保留在未读列；对话计数与当前显示结果一致。
-- 卡片展示会话记录中的模型和思考等级；字段缺失时显示未知。主题直接使用 Codex 宿主提供的颜色变量，跟随深浅色切换。
-- 卡片展示计划/默认模式、目标模式状态，以及当前一轮或最近一轮的累计 token 和耗时。Token 优先使用逐轮统计，旧记录以整段对话累计值的差额计算，包含缓存输入；不会把单次模型请求当作整轮用量。运行中更新耗时，结束后保留该轮数值；断线或未加载时暂停计时，缺失数据保持未知。
-- 卡片展示对应轮次最近一条用户输入的原文，保留空白、换行与 Markdown 字符；最多显示 5 行，超出部分显示省略号。新一轮开始后清空上一轮输入，直到读取到本轮输入；不会使用对话标题代替原文。
-- 默认筛选普通对话，可在筛选器中显示子 Agent。
-- 原生 `waitingOnApproval` / `waitingOnUserInput` 标记映射到待处理列；实际失败通知映射到异常列。
-- 异步问题弹窗也进入「需要你处理」，即使原生状态为运行中或空闲、生成问题的回合已经结束。根据已提交的回答标记或新回合更新待处理状态，保留原生运行状态。客户端仅在界面中关闭或跳过而未写入回答的操作，后端观察器无法独立确认。
-- 点击卡片直接通过 `codex://threads/<id>` 请求打开原对话，不弹出详情框。跳转是否允许由宿主决定。
-- 读取客户端持久化的已读/未读记录。若只有一个持久化账号和本地主机可自动使用；多份本地主机记录时需在「连接与数据源」中明确选择，不合并、不猜测。账号变化后旧选择失效。
-- 连接断开保留最后快照，实时状态失效后归入待同步，避免把陈旧的运行状态当作当前状态。
+## Quick Start
 
-## 开发与预览
+### Install
 
-需要 Node.js >= 22.13（使用只读 `node:sqlite`）。
+Requires the macOS desktop app and **Node.js 22.13+**. The plugin finds compatible Node installations in PATH, NVM, and common Homebrew locations. No npm dependency installation or build is needed.
 
-```sh
-npm ci
-npm run build
-npm run preview
-```
+In **Add plugin marketplace**, enter:
 
-打开 http://127.0.0.1:4318 。`npm run dev` 可启动 Vite 开发界面；同时需运行上述预览服务提供 `/api`。
+| Field        | Value                              |
+| ------------ | ---------------------------------- |
+| Source       | `jingchengyin/codex-kanban-plugin` |
+| Git ref      | `main`                             |
+| Sparse paths | Leave empty                        |
 
-预览服务仅绑定 127.0.0.1，有 Host 校验，不开放跨域访问。插件内通过 MCP 自有工具读取快照，不依赖 iframe 访问本机 HTTP 服务。
+Add the marketplace, then install **对话看板 (Conversation board)** from **Codex Kanban Plugin**.
 
-## 安装插件
-
-### 从 GitHub 安装
-
-需要本机已安装 Node.js >= 22.13。启动器会先检查 `PATH` 中的 Node，再检查 NVM 安装和常见 Homebrew Node 路径；桌面端找到旧 Node 时会继续寻找兼容版本，无需加载 shell 配置。仓库已包含市场清单和自包含发行包，安装插件时无需下载 npm 依赖或运行构建命令。
-
-在「添加插件市场」中填写：
-
-| 字段     | 值                                     |
-| -------- | -------------------------------------- |
-| 来源     | `jingchengyin/codex-kanban-plugin`     |
-| Git 引用 | `main`，或留空使用默认分支             |
-| 稀疏路径 | 留空，市场清单和插件发行包需要一起拉取 |
-
-添加市场后，在「Codex Kanban Plugin」中安装「对话看板」。命令行等价操作：
+Or install with the CLI:
 
 ```sh
 codex plugin marketplace add jingchengyin/codex-kanban-plugin --ref main
 codex plugin add codex-taskboard@codex-kanban-plugin
 ```
 
-根据当前客户端的插件刷新行为，可能需要重新打开 Codex 后才显示「对话看板」入口。普通启动即可读取本地对话和未读记录；实时运行状态仍需下面的共享后端连接。
+### Connect live status
 
-### 本地打包与离线安装
-
-在源码仓库根目录运行：
+Open a separate terminal and run:
 
 ```sh
-npm run package:plugin
-codex plugin marketplace add ./releases/marketplace
-codex plugin add codex-taskboard@codex-taskboard-local
-```
-
-打包会先构建源码，再生成 `plugins/codex-taskboard/` 自包含发行包、`releases/codex-taskboard-0.1.2.zip` 和本地 marketplace。服务端依赖已内联到 `runtime/server/index.mjs`，页面、字体和样式已内联到 `runtime/ui/index.html`；包内不需要 `node_modules`，不会执行安装脚本。第三方许可原文位于 `licenses/`。包内不包含对话记录、测试证据、截图或 Codex 凭据。
-
-发布更新时，请在源码仓库运行 `npm run package:plugin` 并提交重新生成的 `plugins/codex-taskboard/`。仓库根目录的 `.agents/plugins/marketplace.json` 指向该发行目录，使用 GitHub 安装的用户会从那里获取运行文件。可用 `codex plugin marketplace upgrade codex-kanban-plugin` 刷新市场，并在插件管理中更新或重新安装插件。
-
-这是通过 Git 仓库分发的本地桌面插件，未提交官方公开目录审核。GitHub 安装的卸载命令为 `codex plugin remove codex-taskboard@codex-kanban-plugin`；本地安装使用 `codex plugin remove codex-taskboard@codex-taskboard-local`。
-
-## 接入实时状态
-
-**安装插件本身不能观察现有私有 stdio 后端。** 需要让 Codex 桌面与观察器连接同一个官方 App Server WebSocket 后端。用户已在本机验证过这条链路。
-
-在项目目录的独立 Terminal 中运行：
-
-```sh
+cd ~/.codex/plugins/cache/codex-kanban-plugin/codex-taskboard/0.1.2
 npm run codex-kanban-plugin
 ```
 
-通过 GitHub 安装后，运行文件也包含此命令；在终端进入插件安装目录后执行即可。本发行版默认安装位置为 `~/.codex/plugins/cache/codex-kanban-plugin/codex-taskboard/0.1.2/`，实际路径以安装命令输出中的 `installedPath` 为准。源码仓库和安装目录均无需额外安装依赖来运行共享启动命令。
+If your installation directory differs, use the `installedPath` returned by the installer.
 
-命令会启动共享后端，并自动以共享模式打开 Codex。如果 Codex 已打开，终端会等待你按 `⌘Q` 完全退出，然后自动继续启动，无需复制第二条命令。打开「对话看板」，等待「实时已连接」。`npm run live` 保留为兼容别名。
+The command starts a shared backend and opens Codex connected to it. If Codex is already running, press **⌘Q** when prompted; the command will continue automatically. Keep the terminal running, open the board, and check for **Connected** in **Connection & data sources**.
 
-- 点击 Codex 图标：普通启动，使用客户端自己的后端。
-- 运行 `npm run codex-kanban-plugin`：共享启动，Codex 与看板连接同一个后端。
+Live status requires this shared launch. Opening Codex normally still provides local conversations and unread records. After exiting the shared session, you can launch Codex normally from its icon.
 
-共享模式只为本次启动的进程设置环境，不修改全局环境、shell 配置或应用设置。退出共享模式的 Codex 后，下次点击图标即可普通启动，无需恢复命令。普通模式仍可使用对话列表、搜索和已读/未读；运行状态显示为未知。若 Codex 仍在运行，点击图标只会回到当前进程，切换启动方式需先完全退出。
+## Features
 
-脚本同时打印本次后端日志路径。启动失败时会显示退出原因和最后一段日志；日志保存在本机临时目录，只有当前用户可读写。
-
-保持终端运行。退出本次 Codex 进程后，命令会自动停止自己创建的后端并结束。已存在的官方共享后端会被复用，已有共享模式的 Codex 不会被重复打开；本命令不会停止其他终端创建的后端。若在 Codex 仍运行时中断终端，会保留后端，下次运行命令可复用它。
-
-`CODEX_APP_SERVER_WS_URL` 是当前客户端的内部集成变量，可能随版本变化；官方 WebSocket 协议与这个桌面开关的稳定性应分开看。共享启动不会自动复制原 stdio 分支的全部配置覆盖，其他插件、内置工具和权限策略仍需在使用的客户端版本上单独确认。Taskboard 不复制私有 app-tools 管道凭据。
-
-可选环境变量：
-
-| 变量                  | 默认                      | 用途                                             |
-| --------------------- | ------------------------- | ------------------------------------------------ |
-| `CODEX_HOME`          | `~/.codex`                | 本机对话索引与未读数据目录                       |
-| `TASKBOARD_WS_URL`    | `ws://127.0.0.1:19429`    | 已存在的共享状态后端，仅接受无凭据 loopback 地址 |
-| `TASKBOARD_PORT`      | `4318`                    | 浏览器预览端口                                   |
-| `TASKBOARD_CODEX_CLI` | 当前 macOS 应用的随附 CLI | 共享启动命令使用的官方后端程序                   |
-
-## 数据边界与状态含义
-
-- 只读 SQLite 索引、目标状态、客户端未读映射，以及会话 JSONL 中的模式、执行时间、token 元数据和对应轮次的用户输入，不写 Codex 数据。JSONL 首次从末尾扫描，后续增量读取；用户输入原文仅在内存和看板快照中保留，不写日志或本地存储。助手回复、工具正文和客户端注入上下文不保留、不返回。
-- 通过官方 WebSocket 发送 initialize、loaded/list 和 includeTurns=false 的 thread/read；对已加载的运行中或空闲对话额外读取最新一轮 `thread/turns/list`（`limit=1, itemsView=full`），识别摘要中缺失的异步问题与已回答标记。正文只在内存中即时处理，仅保留问题 ID，不写入日志或返回给看板；不 start/resume 对话，不执行工具，不回答审批。
-- `idle` 仅表示当前没有活跃回合，不代表业务验收完成；`notLoaded` 保留为状态待同步。
-- 连接故障和单条对话失败分别显示；没有真实状态时保留未知。
-- 前端只在本地保存视图偏好和明确选择的读取来源，不缓存对话正文或标题。
-- 只观察共享后端的本地对话；不推断其他设备、云端或远程主机状态。
-
-## 验证
-
-```sh
-npm run build
-npm test
-python3 -m unittest discover -s tests -v
-```
-
-自动测试包括临时 SQLite 索引、真实本机测试 WebSocket、审批不代答、失败恢复、断线快照失效、未读身份隔离，以及打包后真实 MCP stdio 的 tools/list、resources/read、tools/call。测试 WebSocket 的待确认/异常样本是受控协议样本，不等于已经在用户桌面实测这些状态。
-
-运行 MCP 测试前先执行 `npm run package:plugin`。同一组 MCP 检查也会把 GitHub 发行目录复制到仓库之外、含空格的临时路径，从不含依赖的目录启动，验证安装包可以独立运行。
-
-原生 Codex 安装测试分别使用终端 PATH 和含旧 Node 的精简桌面 PATH，后者通过临时 NVM 安装寻找兼容 Node；两种环境均需由官方 App Server 成功初始化插件、发现三个工具和看板资源。
-
-macOS 安装了随附 CLI 时，还会通过 Python 标准库创建真实终端，验证官方后端启动、WebSocket 连接、等待现有桌面退出后继续启动、退出后自动清理、已有后端复用、重复命令与端口冲突。测试使用临时数据目录和随机端口，桌面启动及退出由测试替身模拟，不退出或重开用户的 Codex。
-
-此前真实桌面测试已捕获 3 条线程各自 active → idle，至少一条确认是用户线程。待确认与线程失败的真实桌面样本仍待补齐。原始验证资料保留在 outputs/；最新链路结论见 outputs/state-chain-follow-up.md。
-
-## affectUI
-
-实际采用 affectUI 开源组件源码：Button (Clean)、Filter Menu (Clean)、Segmented Control (Clean)、Thinking Loader (Clean)。原始组件和 MIT 许可位于 ui/vendor/affectui，应用层另行添加布局和主题。字体和所有 UI 代码都内联到 HTML，可在 MCP App 的隔离界面中运行。
-
-来源：https://github.com/flohoeller/affectui#use-it-with-ai-tools 。完整第三方声明见 THIRD_PARTY_NOTICES.md。
+- **Five columns:** Needs your input, Running, Unread, Idle, and Error. Each conversation appears in one column; Awaiting sync is available through filters.
+- **Needs attention view:** Focus on conversations awaiting your response, unread conversations, and errors.
+- **Detailed cards:** Model, reasoning effort, plan/default mode, goal status, turn token usage, elapsed time, and the latest user input.
+- **Search and filters:** Filter by project, runtime status, read status, and conversation type, including subagents. Sort by recent activity or title.
+- **Direct navigation:** Click a card to open its conversation without a details dialog.
+- **Unread tracking:** Read saved client records and choose the matching source when multiple records exist.
+- **Live updates:** Follow the shared backend's status and retain the last snapshot when disconnected; unavailable runtime states appear as Awaiting sync.
+- **Codex appearance:** Follow the host's light/dark theme, with English by default and a Chinese language option.
+- **Read-only access:** Observe local data without sending tasks, answering approvals, or modifying conversations and read states.

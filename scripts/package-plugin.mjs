@@ -16,6 +16,7 @@ for (const path of [
   ".codex-plugin",
   "assets",
   "README.md",
+  "README.zh.md",
   "LICENSE",
   "THIRD_PARTY_NOTICES.md",
 ]) {
