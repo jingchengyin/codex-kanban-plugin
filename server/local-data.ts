@@ -2,6 +2,36 @@ import { DatabaseSync } from "node:sqlite";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Thread } from "../shared/types.js";
+import { TurnUsageReader } from "./turn-usage.js";
+
+const turnUsageReader = new TurnUsageReader();
+const goalStatuses: Record<string, Thread["goalStatus"]> = {
+  active: "active",
+  paused: "paused",
+  blocked: "blocked",
+  usage_limited: "usageLimited",
+  budget_limited: "budgetLimited",
+  complete: "complete",
+};
+function readGoals(home: string): Map<string, Thread["goalStatus"]> | null {
+  let database: DatabaseSync | undefined;
+  try {
+    database = new DatabaseSync(join(home, "goals_1.sqlite"), {
+      readOnly: true,
+    });
+    return new Map(
+      (
+        database
+          .prepare("SELECT thread_id, status FROM thread_goals")
+          .all() as any[]
+      ).map((row) => [row.thread_id, goalStatuses[row.status] ?? null]),
+    );
+  } catch {
+    return null;
+  } finally {
+    database?.close();
+  }
+}
 
 type ReadState = {
   ids: Set<string> | null;
@@ -145,9 +175,12 @@ export async function readLocalData(
     const effort = columns.has("reasoning_effort")
       ? "reasoning_effort"
       : "NULL AS reasoning_effort";
+    const rollout = columns.has("rollout_path")
+      ? "rollout_path"
+      : "NULL AS rollout_path";
     const rows = database
       .prepare(
-        `SELECT id, title, ${name}, ${model}, ${effort}, cwd, updated_at, source, ${kind}, ${role} FROM threads WHERE archived=0 ORDER BY updated_at DESC LIMIT 500`,
+        `SELECT id, title, ${name}, ${model}, ${effort}, ${rollout}, cwd, updated_at, source, ${kind}, ${role} FROM threads WHERE archived=0 ORDER BY updated_at DESC LIMIT 500`,
       )
       .all() as any[];
     const threads: Thread[] = rows.map((row) => ({
@@ -171,11 +204,28 @@ export async function readLocalData(
         typeof row.reasoning_effort === "string" && row.reasoning_effort.trim()
           ? row.reasoning_effort
           : null,
+      collaborationMode: null,
+      goalStatus: null,
+      turnUsage: null,
       runtime: null,
       runtimeAt: null,
       fresh: false,
       error: null,
     }));
+    const goals = readGoals(home);
+    for (let offset = 0; offset < threads.length; offset += 8)
+      await Promise.all(
+        threads.slice(offset, offset + 8).map(async (thread, index) => {
+          thread.goalStatus = goals
+            ? goals.has(thread.id)
+              ? goals.get(thread.id)!
+              : "none"
+            : null;
+          const path = rows[offset + index].rollout_path;
+          if (typeof path === "string" && path)
+            Object.assign(thread, await turnUsageReader.read(path));
+        }),
+      );
     return {
       threads,
       metadata: true,

@@ -6,6 +6,7 @@ import {
   Bell,
   ChevronRight,
   Clock3,
+  Cpu,
   Folder,
   LoaderCircle,
   Radio,
@@ -14,6 +15,7 @@ import {
   ShieldCheck,
   SlidersHorizontal,
   SquareKanban,
+  Timer,
   Unplug,
   Wifi,
   WifiOff,
@@ -32,6 +34,14 @@ import {
   type Thread,
 } from "../shared/types";
 import { openConversation, readSnapshot } from "./client";
+import { isColumnVisible, matchesFilters } from "./board-filters";
+import {
+  elapsedMs,
+  formatDuration,
+  formatTokens,
+  goalLabels,
+  isCurrentTurn,
+} from "./card-metrics";
 import "./style.css";
 
 const columns: {
@@ -182,6 +192,9 @@ function Board() {
   const projects = [...new Set(threads.map((thread) => thread.project))].sort(
     (a, b) => a.localeCompare(b, "zh"),
   );
+  const visibleColumns = columns.filter((column) =>
+    isColumnVisible(column.id, filters.state),
+  );
   const displayed = useMemo(
     () =>
       threads
@@ -194,26 +207,7 @@ function Board() {
             column !== "error"
           )
             return false;
-          if (
-            filters.project?.length &&
-            !filters.project.includes(thread.project)
-          )
-            return false;
-          if (filters.kind?.length && !filters.kind.includes(thread.kind))
-            return false;
-          if (
-            filters.read?.length &&
-            !filters.read.includes(
-              thread.unread === null
-                ? "unknown"
-                : thread.unread
-                  ? "unread"
-                  : "read",
-            )
-          )
-            return false;
-          if (filters.state?.length && !filters.state.includes(column))
-            return false;
+          if (!matchesFilters(thread, filters)) return false;
           return `${thread.title} ${thread.project} ${thread.id}`
             .toLocaleLowerCase()
             .includes(query.trim().toLocaleLowerCase());
@@ -436,8 +430,13 @@ function Board() {
               </div>
             </div>
           ) : (
-            <div className="kanban">
-              {columns.map((column) => (
+            <div
+              className="kanban"
+              style={
+                { "--lane-count": visibleColumns.length } as React.CSSProperties
+              }
+            >
+              {visibleColumns.map((column) => (
                 <Lane
                   key={column.id}
                   column={column}
@@ -557,6 +556,7 @@ function Lane({
             onClick={() => onOpen(thread)}
             title={`打开对话：${thread.title}`}
             aria-label={`打开对话：${thread.title}`}
+            aria-describedby={`thread-input-${thread.id}`}
           >
             <span className="card-top">
               <span className="card-project">
@@ -577,12 +577,69 @@ function Lane({
               )}
             </span>
             <h3>{thread.title}</h3>
+            <span className="card-input">
+              <span className="card-input-label">
+                {isCurrentTurn(thread)
+                  ? "本轮输入"
+                  : thread.turnUsage?.status === "inProgress" ||
+                      !thread.turnUsage
+                    ? "最近一轮输入"
+                    : "上轮输入"}
+              </span>
+              <span
+                className="card-input-text"
+                id={`thread-input-${thread.id}`}
+              >
+                {thread.turnUsage?.userInput ?? "未获取到用户输入"}
+              </span>
+            </span>
             <span className="card-model-info">
               <span className="model-tag" title="当前模型">
                 {thread.model ?? "模型未知"}
               </span>
               <span className="effort-tag" title="思考等级">
                 思考 · {thread.reasoningEffort ?? "未知"}
+              </span>
+              <span
+                className={`mode-tag ${thread.collaborationMode === "plan" ? "is-plan" : ""}`}
+                title="当前或最近一轮的协作模式"
+              >
+                {thread.collaborationMode === "plan"
+                  ? "计划模式"
+                  : thread.collaborationMode === "default"
+                    ? "默认模式"
+                    : "模式未知"}
+              </span>
+              <span
+                className={`goal-tag ${thread.goalStatus === "active" ? "is-active" : ""}`}
+              >
+                {thread.goalStatus
+                  ? goalLabels[thread.goalStatus]
+                  : "目标状态未知"}
+              </span>
+            </span>
+            <span className="card-usage">
+              <span className="usage-scope">
+                {isCurrentTurn(thread)
+                  ? "本轮"
+                  : thread.turnUsage?.status === "inProgress" ||
+                      !thread.turnUsage
+                    ? "最近一轮"
+                    : "上轮"}
+              </span>
+              <span
+                title={
+                  thread.turnUsage?.tokens != null
+                    ? `本轮累计 ${thread.turnUsage.tokens.toLocaleString("zh-CN")} tokens，包含输入、缓存输入和输出`
+                    : "本轮累计 token 数据不可用"
+                }
+              >
+                <Cpu size={11} />
+                {formatTokens(thread.turnUsage?.tokens ?? null)}
+              </span>
+              <span title="这一轮从开始到结束的累计耗时；运行时持续更新，断线后暂停计时">
+                <Timer size={11} />
+                {formatDuration(elapsedMs(thread))}
               </span>
             </span>
             <span className="card-bottom">

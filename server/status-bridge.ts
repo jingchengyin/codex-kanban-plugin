@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import { readLocalData } from "./local-data.js";
+import { hasUnansweredInput, inputState } from "./user-input.js";
 import type {
   ConnectionState,
   RuntimeStatus,
@@ -45,6 +46,12 @@ export class StatusBridge {
     { status: RuntimeStatus; at: string; error: Thread["error"] }
   >();
   private ephemeral = new Map<string, Thread>();
+  private userInput = new Map<string, ReturnType<typeof inputState>>();
+  private inputEpoch = new Map<string, number>();
+  private modes = new Map<
+    string,
+    Partial<Pick<Thread, "collaborationMode" | "goalStatus">>
+  >();
   private connection: Snapshot["connection"];
   private cache?: {
     at: number;
@@ -146,6 +153,9 @@ export class StatusBridge {
         // A new connection cannot certify the freshness of an old runtime cache.
         this.runtime.clear();
         this.ephemeral.clear();
+        this.userInput.clear();
+        this.inputEpoch.clear();
+        this.modes.clear();
         this.state("connected");
         await this.hydrate();
         this.hydration = setInterval(() => {
@@ -187,6 +197,7 @@ export class StatusBridge {
         at: now(),
         error: previous?.error ?? null,
       });
+      if (thread.status.type !== "active") this.userInput.delete(thread.id);
     }
     this.ephemeral.set(thread.id, {
       id: thread.id,
@@ -209,6 +220,9 @@ export class StatusBridge {
       unread: null,
       model: null,
       reasoningEffort: null,
+      collaborationMode: null,
+      goalStatus: null,
+      turnUsage: null,
       runtime: null,
       runtimeAt: null,
       fresh: false,
@@ -216,6 +230,50 @@ export class StatusBridge {
     });
   }
   private notification(method: string, params: any) {
+    if (
+      method === "thread/settings/updated" &&
+      typeof params.threadId === "string"
+    ) {
+      const mode = params.threadSettings?.collaborationMode?.mode;
+      if (mode === "plan" || mode === "default")
+        this.modes.set(params.threadId, {
+          ...this.modes.get(params.threadId),
+          collaborationMode: mode,
+        });
+    }
+    if (
+      method === "thread/goal/updated" &&
+      typeof params.threadId === "string"
+    ) {
+      const status = params.goal?.status;
+      if (
+        [
+          "active",
+          "paused",
+          "blocked",
+          "usageLimited",
+          "budgetLimited",
+          "complete",
+        ].includes(status)
+      )
+        this.modes.set(params.threadId, {
+          ...this.modes.get(params.threadId),
+          goalStatus: status,
+        });
+    }
+    if (method === "thread/goal/cleared" && typeof params.threadId === "string")
+      this.modes.set(params.threadId, {
+        ...this.modes.get(params.threadId),
+        goalStatus: "none",
+      });
+    if (
+      ["turn/started", "turn/completed", "thread/closed"].includes(method) &&
+      typeof params.threadId === "string"
+    )
+      this.inputEpoch.set(
+        params.threadId,
+        (this.inputEpoch.get(params.threadId) ?? 0) + 1,
+      );
     if (method === "thread/started") this.remember(params.thread);
     if (
       method === "thread/status/changed" &&
@@ -229,10 +287,33 @@ export class StatusBridge {
         at: now(),
         error: this.runtime.get(params.threadId)?.error ?? null,
       });
+      if (params.status.type !== "active")
+        this.userInput.delete(params.threadId);
     }
     if (method === "turn/started" && typeof params.threadId === "string") {
       const old = this.runtime.get(params.threadId);
       if (old) old.error = null;
+      if (typeof params.turn?.id === "string")
+        this.userInput.set(params.threadId, inputState(params.turn.id, []));
+      else this.userInput.delete(params.threadId);
+    }
+    if (
+      (method === "item/started" || method === "item/completed") &&
+      typeof params.threadId === "string" &&
+      typeof params.turnId === "string" &&
+      this.runtime.get(params.threadId)?.status.type === "active"
+    ) {
+      const previous = this.userInput.get(params.threadId);
+      if (!previous || previous.turnId === params.turnId)
+        this.userInput.set(
+          params.threadId,
+          inputState(params.turnId, [params.item], previous),
+        );
+    }
+    if (method === "turn/completed" || method === "thread/closed") {
+      const previous = this.userInput.get(params.threadId);
+      if (!params.turn?.id || previous?.turnId === params.turn.id)
+        this.userInput.delete(params.threadId);
     }
     if (
       method === "turn/completed" &&
@@ -256,13 +337,16 @@ export class StatusBridge {
         : [];
       const loadedIds = new Set(ids);
       for (const [id, state] of this.runtime)
-        if (!loadedIds.has(id))
+        if (!loadedIds.has(id)) {
+          this.userInput.delete(id);
           this.runtime.set(id, {
             ...state,
             status: { type: "notLoaded" },
             at: now(),
           });
-      // Bound concurrency without resuming any conversation or loading transcripts.
+        }
+      // Bound concurrency without resuming any conversation. Only active
+      // threads need the latest turn to recover pending async questions.
       for (let offset = 0; offset < ids.length; offset += 8) {
         await Promise.all(
           ids.slice(offset, offset + 8).map(async (id) => {
@@ -272,10 +356,13 @@ export class StatusBridge {
                 includeTurns: false,
               });
               this.remember(read.thread);
+              if (read.thread?.status?.type === "active")
+                await this.hydrateUserInput(id);
             } catch {
               // A thread can unload between list and read. This is not a host
               // disconnection; transport close is handled independently.
               this.runtime.delete(id);
+              this.userInput.delete(id);
             }
           }),
         );
@@ -287,6 +374,38 @@ export class StatusBridge {
       this.refreshing = undefined;
     }
   }
+  private async hydrateUserInput(threadId: string) {
+    const previous = this.userInput.get(threadId);
+    const epoch = this.inputEpoch.get(threadId);
+    try {
+      // Async questions are omitted from summary views. Read only the latest
+      // active turn and discard all content after extracting question IDs.
+      const result = await this.request("thread/turns/list", {
+        threadId,
+        limit: 1,
+        sortDirection: "desc",
+        itemsView: "full",
+      });
+      // Live item events or a turn transition take precedence over this read.
+      if (
+        this.userInput.get(threadId) !== previous ||
+        this.inputEpoch.get(threadId) !== epoch ||
+        this.runtime.get(threadId)?.status.type !== "active"
+      )
+        return;
+      const turn = result.data?.[0];
+      if (
+        turn?.status === "inProgress" &&
+        typeof turn.id === "string" &&
+        Array.isArray(turn.items)
+      )
+        this.userInput.set(threadId, inputState(turn.id, turn.items));
+      else this.userInput.delete(threadId);
+    } catch {
+      // Older servers may not support turn pagination. Keep native flags and
+      // any questions already observed on this connection.
+    }
+  }
   async snapshot(selection: string | null = null): Promise<Snapshot> {
     const cached = this.cache;
     const hit =
@@ -295,12 +414,29 @@ export class StatusBridge {
     if (!hit) this.cache = { at: Date.now(), selection, data: local };
     const threads = new Map(this.ephemeral);
     for (const thread of local.threads) threads.set(thread.id, thread);
+    if (this.connection.state === "connected")
+      for (const [id, mode] of this.modes) {
+        const thread = threads.get(id);
+        if (thread) threads.set(id, { ...thread, ...mode });
+      }
     for (const [id, value] of this.runtime) {
       const thread = threads.get(id);
       if (thread)
         threads.set(id, {
           ...thread,
-          runtime: value.status,
+          runtime:
+            value.status.type === "active" &&
+            hasUnansweredInput(this.userInput.get(id))
+              ? {
+                  ...value.status,
+                  activeFlags: [
+                    ...new Set([
+                      ...(value.status.activeFlags ?? []),
+                      "waitingOnUserInput",
+                    ]),
+                  ],
+                }
+              : value.status,
           runtimeAt: value.at,
           fresh: this.connection.state === "connected",
           error: value.error,

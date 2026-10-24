@@ -4,6 +4,23 @@ export type RuntimeStatus = {
   type: "active" | "idle" | "notLoaded" | "systemError";
   activeFlags?: string[];
 };
+export type GoalStatus =
+  | "active"
+  | "paused"
+  | "blocked"
+  | "usageLimited"
+  | "budgetLimited"
+  | "complete";
+export type TurnUsage = {
+  id: string;
+  userInput: string | null;
+  status: "inProgress" | "completed" | "interrupted";
+  startedAt: string | null;
+  completedAt: string | null;
+  updatedAt: string;
+  tokens: number | null;
+  durationMs: number | null;
+};
 export type Thread = {
   id: string;
   title: string;
@@ -13,6 +30,9 @@ export type Thread = {
   kind: "user" | "agent" | "unknown";
   model: string | null;
   reasoningEffort: string | null;
+  collaborationMode: "plan" | "default" | null;
+  goalStatus: GoalStatus | "none" | null;
+  turnUsage: TurnUsage | null;
   unread: boolean | null;
   runtime: RuntimeStatus | null;
   runtimeAt: string | null;

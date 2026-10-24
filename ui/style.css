@@ -286,7 +286,7 @@ input {
 }
 .kanban {
   display: grid;
-  grid-template-columns: repeat(6, minmax(204px, 1fr));
+  grid-template-columns: repeat(var(--lane-count, 5), minmax(204px, 1fr));
   gap: 12px;
   height: calc(100dvh - 136px - var(--safe-top) - var(--safe-bottom));
   min-height: 360px;
@@ -401,6 +401,28 @@ input {
   font-weight: 500;
   line-height: 1.65;
 }
+.card-input {
+  display: block;
+  min-width: 0;
+  margin-bottom: 13px;
+}
+.card-input-label {
+  display: block;
+  margin-bottom: 5px;
+  color: var(--muted);
+  font-size: 10px;
+}
+.card-input-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 5;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 1.6;
+}
 .card-model-info {
   display: flex;
   flex-wrap: wrap;
@@ -409,7 +431,9 @@ input {
   margin-bottom: 13px;
 }
 .model-tag,
-.effort-tag {
+.effort-tag,
+.mode-tag,
+.goal-tag {
   max-width: 100%;
   padding: 3px 6px;
   border: 1px solid var(--line);
@@ -421,6 +445,33 @@ input {
 }
 .effort-tag {
   background: var(--soft);
+}
+.mode-tag.is-plan {
+  color: var(--blue);
+  background: color-mix(in srgb, var(--blue) 7%, var(--surface));
+}
+.goal-tag.is-active {
+  color: var(--green);
+  background: color-mix(in srgb, var(--green) 7%, var(--surface));
+}
+.card-usage {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px 10px;
+  margin: -3px 0 13px;
+  color: var(--muted);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+}
+.card-usage > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.usage-scope {
+  color: var(--ink);
 }
 .card-bottom {
   display: flex;
@@ -736,7 +787,7 @@ input {
     margin-left: auto;
   }
   .kanban {
-    grid-template-columns: repeat(6, 260px);
+    grid-template-columns: repeat(var(--lane-count, 5), 260px);
     height: calc(100dvh - 204px - var(--safe-top) - var(--safe-bottom));
   }
   .skeleton-grid {
