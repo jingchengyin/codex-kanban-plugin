@@ -37,6 +37,12 @@ export type FilterMenuProps = {
   title?: string;
   /** Show the keyboard hints as the last row of the card */
   hints?: boolean;
+  labels?: {
+    clearAll?: string;
+    remove?: (label: string) => string;
+    more?: (count: number, labels: string) => string;
+    selected?: (count: number) => string;
+  };
   className?: string;
 };
 
@@ -53,6 +59,7 @@ export function FilterMenu({
   defaultOpen,
   title = "Filters",
   hints = true,
+  labels,
   className,
 }: FilterMenuProps) {
   const [inner, setInner] = useState<FilterValue>(defaultValue);
@@ -86,7 +93,7 @@ export function FilterMenu({
   const chips = groups.flatMap((g) =>
     g.options.filter((o) => isOn(g.id, o.id)).map((o) => ({ group: g, option: o, label: `${g.chipPrefix ?? ""}${o.label}` })),
   );
-  const chipKey = chips.map((c) => `${c.group.id}:${c.option.id}`).join("|");
+  const chipKey = chips.map((c) => `${c.group.id}:${c.option.id}:${c.label}`).join("|");
 
   // One line only: as many chips as fit, the rest hide behind "+N".
   // A hidden copy of the chips (plus a "+99" sample) is measured to know their widths before they are placed.
@@ -164,7 +171,7 @@ export function FilterMenu({
       <div className="ui-fmc__head">
         <span className="ui-fmc__title">{title}</span>
         <button type="button" className="ui-fmc__clear" disabled={chips.length === 0} onClick={() => commit({})}>
-          Clear all
+          {labels?.clearAll ?? "Clear all"}
         </button>
       </div>
 
@@ -184,7 +191,7 @@ export function FilterMenu({
           {shown.map((c) => (
             <span key={`${c.group.id}:${c.option.id}`} className="ui-fmc__chip">
               <span className="ui-fmc__chip-label">{c.label}</span>
-              <button type="button" className="ui-fmc__chip-x" aria-label={`Remove ${c.label}`} onClick={() => toggle(c.group.id, c.option.id)}>
+              <button type="button" className="ui-fmc__chip-x" aria-label={labels?.remove?.(c.label) ?? `Remove ${c.label}`} onClick={() => toggle(c.group.id, c.option.id)}>
                 <svg viewBox="0 0 16 16" aria-hidden="true">
                   <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
                 </svg>
@@ -195,7 +202,7 @@ export function FilterMenu({
             <span
               className="ui-fmc__chip ui-fmc__more"
               title={hidden.map((c) => c.label).join(", ")}
-              aria-label={`${hidden.length} more: ${hidden.map((c) => c.label).join(", ")}`}
+              aria-label={labels?.more?.(hidden.length, hidden.map((c) => c.label).join(", ")) ?? `${hidden.length} more: ${hidden.map((c) => c.label).join(", ")}`}
             >
               <span key={hidden.length} className="ui-fmc__roll">
                 +{hidden.length}
@@ -230,7 +237,7 @@ export function FilterMenu({
                 <span className="ui-fmc__group-picked" aria-live="polite">
                   {count > 0 && (
                     <span key={count} className="ui-fmc__roll">
-                      {`${count} filter${count === 1 ? "" : "s"}`}
+                      {labels?.selected?.(count) ?? `${count} filter${count === 1 ? "" : "s"}`}
                     </span>
                   )}
                 </span>

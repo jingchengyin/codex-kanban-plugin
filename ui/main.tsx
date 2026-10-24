@@ -28,8 +28,10 @@ import { ThinkingLoader } from "./vendor/affectui/thinking-loader";
 import {
   columnFor,
   belongsToColumn,
+  needsAttention,
   waitingLabel,
   type BoardColumn,
+  type BoardScope,
   type Snapshot,
   type Thread,
 } from "../shared/types";
@@ -42,6 +44,7 @@ import {
   goalLabels,
   isCurrentTurn,
 } from "./card-metrics";
+import { LanguageProvider, translate, useI18n, type Language } from "./i18n";
 import "./style.css";
 
 const columns: {
@@ -86,18 +89,20 @@ const labelFor = (thread: Thread) =>
   columnFor(thread) === "waiting"
     ? waitingLabel(thread)
     : columns.find((c) => c.id === columnFor(thread))!.label;
-function relativeTime(value: string) {
+function relativeTime(value: string, language: Language) {
+  const t = (text: string, count?: number) =>
+    translate(language, text, { count: count ?? 0 });
   const minutes = Math.max(
     0,
     Math.floor((Date.now() - new Date(value).getTime()) / 60000),
   );
   return minutes < 1
-    ? "刚刚"
+    ? t("刚刚")
     : minutes < 60
-      ? `${minutes} 分钟前`
+      ? t("{count} 分钟前", minutes)
       : minutes < 1440
-        ? `${Math.floor(minutes / 60)} 小时前`
-        : `${Math.floor(minutes / 1440)} 天前`;
+        ? t("{count} 小时前", Math.floor(minutes / 60))
+        : t("{count} 天前", Math.floor(minutes / 1440));
 }
 function preference<T>(key: string, fallback: T): T {
   try {
@@ -108,11 +113,12 @@ function preference<T>(key: string, fallback: T): T {
   }
 }
 function Board() {
+  const { language, setLanguage, locale, t } = useI18n();
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
-  const [scope, setScope] = useState("all");
+  const [scope, setScope] = useState<BoardScope>("all");
   const [filters, setFilters] = useState<FilterValue>({ kind: ["user"] });
   const [readSource, setReadSource] = useState<string | null>(() =>
     preference("read-source", null),
@@ -178,35 +184,22 @@ function Board() {
       ),
     [snapshot, fetchError],
   );
-  const totals = useMemo(
-    () =>
-      Object.fromEntries(
-        columns.map((column) => [
-          column.id,
-          threads.filter((thread) => belongsToColumn(thread, column.id)).length,
-        ]),
-      ) as Record<BoardColumn, number>,
-    [threads],
-  );
-  const unreadCount = threads.filter((thread) => thread.unread === true).length;
+  const attentionCount = threads.filter(needsAttention).length;
   const projects = [...new Set(threads.map((thread) => thread.project))].sort(
-    (a, b) => a.localeCompare(b, "zh"),
+    (a, b) => a.localeCompare(b, locale),
   );
-  const visibleColumns = columns.filter((column) =>
-    isColumnVisible(column.id, filters.state),
-  );
+  const visibleColumns = columns
+    .filter((column) => isColumnVisible(column.id, filters.state, scope))
+    .map((column) => ({
+      ...column,
+      label: t(column.label),
+      detail: t(column.detail),
+    }));
   const displayed = useMemo(
     () =>
       threads
         .filter((thread) => {
-          const column = columnFor(thread);
-          if (scope === "unread" && thread.unread !== true) return false;
-          if (
-            scope === "attention" &&
-            column !== "waiting" &&
-            column !== "error"
-          )
-            return false;
+          if (scope === "attention" && !needsAttention(thread)) return false;
           if (!matchesFilters(thread, filters)) return false;
           return `${thread.title} ${thread.project} ${thread.id}`
             .toLocaleLowerCase()
@@ -214,10 +207,10 @@ function Board() {
         })
         .sort((a, b) =>
           sort === "title"
-            ? a.title.localeCompare(b.title, "zh")
+            ? a.title.localeCompare(b.title, locale)
             : b.updatedAt.localeCompare(a.updatedAt),
         ),
-    [threads, scope, filters, query, sort],
+    [threads, scope, filters, query, sort, locale],
   );
   const live = snapshot?.connection.state === "connected" && !fetchError;
   const loading = !snapshot && !fetchError;
@@ -246,35 +239,30 @@ function Board() {
   return (
     <div className="app-shell">
       <main className="main">
-        <section className="board-section" aria-label="对话看板">
+        <section className="board-section" aria-label={t("对话看板")}>
           <div className="board-toolbar">
-            <SegmentedControl
+            <SegmentedControl<BoardScope>
               options={[
-                { value: "all", label: "全部对话", count: threads.length },
+                { value: "all", label: t("全部对话"), count: threads.length },
                 {
                   value: "attention",
-                  label: "需要关注",
-                  count: totals.waiting + totals.error,
-                },
-                {
-                  value: "unread",
-                  label: "未读",
-                  count: snapshot?.sources.unread ? unreadCount : "—",
+                  label: t("需要关注"),
+                  count: attentionCount,
                 },
               ]}
               value={scope}
               onChange={setScope}
               size="sm"
               variant="underline"
-              aria-label="对话范围"
+              aria-label={t("对话范围")}
             />
             <div className="toolbar-actions">
               <label className="search">
                 <Search size={15} />
                 <input
                   ref={search}
-                  aria-label="搜索对话"
-                  placeholder="搜索对话…"
+                  aria-label={t("搜索对话")}
+                  placeholder={t("搜索对话…")}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -287,21 +275,22 @@ function Board() {
                 icon={<SlidersHorizontal size={14} />}
                 onClick={() => setFilterOpen(!filterOpen)}
               >
-                筛选{activeFilters ? ` ${activeFilters}` : ""}
+                {t("筛选")}
+                {activeFilters ? ` ${activeFilters}` : ""}
               </Button>
               <button
                 className={`connection-pill ${live ? "is-live" : ""}`}
                 onClick={() => setSettings(true)}
-                aria-label="连接与数据源"
-                title="连接与数据源"
+                aria-label={t("连接与数据源")}
+                title={t("连接与数据源")}
               >
                 {live ? <Wifi size={14} /> : <WifiOff size={14} />}
                 <span>
                   {live
-                    ? "已连接"
+                    ? t("已连接")
                     : snapshot?.connection.state === "connecting"
-                      ? "连接中"
-                      : "未连接"}
+                      ? t("连接中")
+                      : t("未连接")}
                 </span>
                 <span className="connection-dot" />
               </button>
@@ -314,45 +303,71 @@ function Board() {
                 onClick={() => void refresh()}
                 disabled={refreshing}
               >
-                刷新
+                {t("刷新")}
               </Button>
+              <label className="language-picker">
+                <span>Language</span>
+                <select
+                  aria-label="Language"
+                  value={language}
+                  onChange={(event) =>
+                    setLanguage(event.target.value === "CN" ? "CN" : "EN")
+                  }
+                >
+                  <option value="EN" lang="en">
+                    EN
+                  </option>
+                  <option value="CN" lang="zh-CN">
+                    CN
+                  </option>
+                </select>
+              </label>
             </div>
           </div>
           {fetchError && (
             <div className="data-notice" role="alert">
-              <Unplug size={14} /> {fetchError}。当前显示最后一次快照。
+              <Unplug size={14} /> {t(fetchError)}
+              {t("。当前显示最后一次快照。")}
             </div>
           )}
           {snapshot && !snapshot.sources.metadata && (
             <div className="data-notice" role="alert">
-              {snapshot.sources.metadataError}
+              {snapshot.sources.metadataError &&
+                t(snapshot.sources.metadataError)}
             </div>
           )}
           {filterOpen && (
             <div className="filter-area">
               <FilterMenu
-                title="筛选对话"
+                title={t("筛选对话")}
                 hints={false}
+                labels={{
+                  clearAll: t("清除全部"),
+                  remove: (label) => t("移除 {label}", { label }),
+                  more: (count, labels) =>
+                    t("另有 {count} 项：{labels}", { count, labels }),
+                  selected: (count) => t("{count} 项筛选", { count }),
+                }}
                 groups={[
                   {
                     id: "state",
-                    label: "运行状态",
+                    label: t("运行状态"),
                     options: columns
                       .filter((c) => c.id !== "unread")
-                      .map((c) => ({ id: c.id, label: c.label })),
+                      .map((c) => ({ id: c.id, label: t(c.label) })),
                   },
                   {
                     id: "read",
-                    label: "阅读状态",
+                    label: t("阅读状态"),
                     options: [
-                      { id: "unread", label: "未读" },
-                      { id: "read", label: "已读" },
-                      { id: "unknown", label: "未知" },
+                      { id: "unread", label: t("未读") },
+                      { id: "read", label: t("已读") },
+                      { id: "unknown", label: t("未知") },
                     ],
                   },
                   {
                     id: "project",
-                    label: "项目",
+                    label: t("项目"),
                     options: projects.map((project) => ({
                       id: project,
                       label: project,
@@ -360,11 +375,11 @@ function Board() {
                   },
                   {
                     id: "kind",
-                    label: "对话类型",
+                    label: t("对话类型"),
                     options: [
-                      { id: "user", label: "普通对话" },
-                      { id: "agent", label: "子 Agent" },
-                      { id: "unknown", label: "其他 / 未知" },
+                      { id: "user", label: t("普通对话") },
+                      { id: "agent", label: t("子 Agent") },
+                      { id: "unknown", label: t("其他 / 未知") },
                     ],
                   },
                 ]}
@@ -377,20 +392,22 @@ function Board() {
                 icon={<X size={14} />}
                 onClick={() => setFilterOpen(false)}
               >
-                收起筛选
+                {t("收起筛选")}
               </Button>
             </div>
           )}
           <div className="board-meta">
             <span>
               <span className={`tiny-dot ${live ? "green" : ""}`} />
-              {loading ? "正在读取本地对话" : `${displayed.length} 条对话`}
+              {loading
+                ? t("正在读取本地对话")
+                : t("{count} 条对话", { count: displayed.length })}
             </span>
             <div className="board-meta-actions">
               {snapshot && (
                 <span className="updated-at">
-                  更新于{" "}
-                  {new Date(snapshot.generatedAt).toLocaleTimeString("zh-CN", {
+                  {t("更新于")}{" "}
+                  {new Date(snapshot.generatedAt).toLocaleTimeString(locale, {
                     hour12: false,
                   })}
                 </span>
@@ -404,7 +421,7 @@ function Board() {
                     setScope("all");
                   }}
                 >
-                  重置筛选
+                  {t("重置筛选")}
                 </button>
               )}
               <button
@@ -412,13 +429,13 @@ function Board() {
                 onClick={() => setSort(sort === "recent" ? "title" : "recent")}
               >
                 <ArrowDownWideNarrow size={13} />
-                {sort === "recent" ? "最近更新" : "标题排序"}
+                {sort === "recent" ? t("最近更新") : t("标题排序")}
               </button>
             </div>
           </div>
           {loading ? (
             <div className="loading-board">
-              <ThinkingLoader phases={["正在读取本地对话"]} phase={0} />
+              <ThinkingLoader phases={[t("正在读取本地对话")]} phase={0} />
               <div className="skeleton-grid">
                 {Array.from({ length: 6 }, (_, i) => (
                   <div className="skeleton-card" key={i}>
@@ -441,7 +458,7 @@ function Board() {
                   key={column.id}
                   column={column}
                   threads={displayed.filter((thread) =>
-                    belongsToColumn(thread, column.id),
+                    belongsToColumn(thread, column.id, scope),
                   )}
                   onOpen={(thread) => void open(thread)}
                   unreadAvailable={snapshot?.sources.unread ?? false}
@@ -453,13 +470,15 @@ function Board() {
         </section>
       </main>
       {settings && (
-        <Modal title="连接与数据源" onClose={() => setSettings(false)}>
+        <Modal title={t("连接与数据源")} onClose={() => setSettings(false)}>
           <div className="source-status">
             <span className={live ? "source-icon live" : "source-icon"}>
               {live ? <Wifi size={22} /> : <WifiOff size={22} />}
             </span>
             <div>
-              <h2>{live ? "共享状态服务已连接" : "实时状态服务未连接"}</h2>
+              <h2>
+                {live ? t("共享状态服务已连接") : t("实时状态服务未连接")}
+              </h2>
               <p>{snapshot?.connection.endpoint ?? "ws://127.0.0.1:19429"}</p>
             </div>
           </div>
@@ -470,52 +489,58 @@ function Board() {
           />
           <div className="source-list">
             <div>
-              <span>对话列表</span>
+              <span>{t("对话列表")}</span>
               <strong>
-                {snapshot?.sources.metadata ? "本机 SQLite · 可用" : "不可用"}
+                {snapshot?.sources.metadata
+                  ? t("本机 SQLite · 可用")
+                  : t("不可用")}
               </strong>
             </div>
             <div>
-              <span>已读 / 未读</span>
+              <span>{t("已读 / 未读")}</span>
               <strong>
                 {snapshot?.sources.unread
-                  ? "客户端持久化记录 · 可用"
-                  : "不可用 / 身份不唯一"}
+                  ? t("客户端持久化记录 · 可用")
+                  : t("不可用 / 身份不唯一")}
               </strong>
             </div>
             <div>
-              <span>实时运行状态</span>
+              <span>{t("实时运行状态")}</span>
               <strong>
-                {live ? "共享 App Server · 已连接" : "等待共享后端"}
+                {live ? t("共享 App Server · 已连接") : t("等待共享后端")}
               </strong>
             </div>
           </div>
           <p className="settings-note">
-            {snapshot?.sources.unreadReason ?? "正在检查数据源"}
-            。未读记录属于客户端内部格式，兼容性可能随版本变化。
+            {t(snapshot?.sources.unreadReason ?? "正在检查数据源")}
+            {t("。未读记录属于客户端内部格式，兼容性可能随版本变化。")}
           </p>
-          <h3>接入实时状态</h3>
+          <h3>{t("接入实时状态")}</h3>
           <p className="settings-note">
-            在本项目目录的独立终端运行以下命令，会自动以共享模式打开 Codex。若
-            Codex 已打开，按提示退出即可，命令会继续启动。保持终端运行。
+            {t(
+              "在本项目目录的独立终端运行以下命令，会自动以共享模式打开 Codex。若 Codex 已打开，按提示退出即可，命令会继续启动。保持终端运行。",
+            )}
           </p>
           <pre className="setup-command">npm run codex-kanban-plugin</pre>
           <p className="settings-note">
-            退出本次 Codex 后，命令会自动清理自己创建的后端。以后直接点击 Codex
-            图标即可普通启动，无需恢复命令。
+            {t(
+              "退出本次 Codex 后，命令会自动清理自己创建的后端。以后直接点击 Codex 图标即可普通启动，无需恢复命令。",
+            )}
           </p>
           <p className="settings-note">
-            仅观察共享后端上的本地对话。未加载、失去连接或没有数据的状态会显示为「状态待同步」，不会猜测任务已经完成。实时连接断开与单条对话执行失败分别显示。
+            {t(
+              "仅观察共享后端上的本地对话。未加载、失去连接或没有数据的状态会显示为「状态待同步」，不会猜测任务已经完成。实时连接断开与单条对话执行失败分别显示。",
+            )}
           </p>
           <div className="data-boundary">
             <ShieldCheck size={16} />
-            <span>仅展示本机数据 · 不处理审批 · 不修改 Codex 数据</span>
+            <span>{t("仅展示本机数据 · 不处理审批 · 不修改 Codex 数据")}</span>
           </div>
         </Modal>
       )}
       {toast && (
         <div className="toast" role="status">
-          {toast}
+          {t(toast)}
         </div>
       )}
     </div>
@@ -535,6 +560,7 @@ function Lane({
   unreadAvailable: boolean;
   onConfigure: () => void;
 }) {
+  const { language, locale, t } = useI18n();
   const [limit, setLimit] = useState(20);
   const unreadUnknown = column.id === "unread" && !unreadAvailable;
   return (
@@ -554,8 +580,8 @@ function Lane({
             className="thread-card"
             key={thread.id}
             onClick={() => onOpen(thread)}
-            title={`打开对话：${thread.title}`}
-            aria-label={`打开对话：${thread.title}`}
+            title={t("打开对话：{title}", { title: thread.title })}
+            aria-label={t("打开对话：{title}", { title: thread.title })}
             aria-describedby={`thread-input-${thread.id}`}
           >
             <span className="card-top">
@@ -566,12 +592,12 @@ function Lane({
               {thread.unread === true && (
                 <span
                   className="unread-marker"
-                  title="未读"
-                  aria-label="未读"
+                  title={t("未读")}
+                  aria-label={t("未读")}
                 />
               )}
               {thread.unread === null && (
-                <span className="read-unknown" title="阅读状态未知">
+                <span className="read-unknown" title={t("阅读状态未知")}>
                   ?
                 </span>
               )}
@@ -580,66 +606,72 @@ function Lane({
             <span className="card-input">
               <span className="card-input-label">
                 {isCurrentTurn(thread)
-                  ? "本轮输入"
+                  ? t("本轮输入")
                   : thread.turnUsage?.status === "inProgress" ||
                       !thread.turnUsage
-                    ? "最近一轮输入"
-                    : "上轮输入"}
+                    ? t("最近一轮输入")
+                    : t("上轮输入")}
               </span>
               <span
                 className="card-input-text"
                 id={`thread-input-${thread.id}`}
               >
-                {thread.turnUsage?.userInput ?? "未获取到用户输入"}
+                {thread.turnUsage?.userInput ?? t("未获取到用户输入")}
               </span>
             </span>
             <span className="card-model-info">
-              <span className="model-tag" title="当前模型">
-                {thread.model ?? "模型未知"}
+              <span className="model-tag" title={t("当前模型")}>
+                {thread.model ?? t("模型未知")}
               </span>
-              <span className="effort-tag" title="思考等级">
-                思考 · {thread.reasoningEffort ?? "未知"}
+              <span className="effort-tag" title={t("思考等级")}>
+                {t("思考")} · {thread.reasoningEffort ?? t("未知")}
               </span>
               <span
                 className={`mode-tag ${thread.collaborationMode === "plan" ? "is-plan" : ""}`}
-                title="当前或最近一轮的协作模式"
+                title={t("当前或最近一轮的协作模式")}
               >
                 {thread.collaborationMode === "plan"
-                  ? "计划模式"
+                  ? t("计划模式")
                   : thread.collaborationMode === "default"
-                    ? "默认模式"
-                    : "模式未知"}
+                    ? t("默认模式")
+                    : t("模式未知")}
               </span>
               <span
                 className={`goal-tag ${thread.goalStatus === "active" ? "is-active" : ""}`}
               >
                 {thread.goalStatus
-                  ? goalLabels[thread.goalStatus]
-                  : "目标状态未知"}
+                  ? t(goalLabels[thread.goalStatus])
+                  : t("目标状态未知")}
               </span>
             </span>
             <span className="card-usage">
               <span className="usage-scope">
                 {isCurrentTurn(thread)
-                  ? "本轮"
+                  ? t("本轮")
                   : thread.turnUsage?.status === "inProgress" ||
                       !thread.turnUsage
-                    ? "最近一轮"
-                    : "上轮"}
+                    ? t("最近一轮")
+                    : t("上轮")}
               </span>
               <span
                 title={
                   thread.turnUsage?.tokens != null
-                    ? `本轮累计 ${thread.turnUsage.tokens.toLocaleString("zh-CN")} tokens，包含输入、缓存输入和输出`
-                    : "本轮累计 token 数据不可用"
+                    ? t("本轮累计 {count} tokens，包含输入、缓存输入和输出", {
+                        count: thread.turnUsage.tokens.toLocaleString(locale),
+                      })
+                    : t("本轮累计 token 数据不可用")
                 }
               >
                 <Cpu size={11} />
-                {formatTokens(thread.turnUsage?.tokens ?? null)}
+                {formatTokens(thread.turnUsage?.tokens ?? null, language)}
               </span>
-              <span title="这一轮从开始到结束的累计耗时；运行时持续更新，断线后暂停计时">
+              <span
+                title={t(
+                  "这一轮从开始到结束的累计耗时；运行时持续更新，断线后暂停计时",
+                )}
+              >
                 <Timer size={11} />
-                {formatDuration(elapsedMs(thread))}
+                {formatDuration(elapsedMs(thread), language)}
               </span>
             </span>
             <span className="card-bottom">
@@ -652,20 +684,20 @@ function Lane({
                   <span className="card-state-dot" />
                 )}
                 {column.id === "unread"
-                  ? labelFor(thread)
+                  ? t(labelFor(thread))
                   : columnFor(thread) === "waiting"
-                    ? waitingLabel(thread)
+                    ? t(waitingLabel(thread))
                     : thread.kind === "agent"
-                      ? "子 Agent"
+                      ? t("子 Agent")
                       : columnFor(thread) === "unknown"
                         ? thread.runtime?.type === "notLoaded" && thread.fresh
-                          ? "对话尚未加载"
-                          : "实时状态未知"
-                        : "本地对话"}
+                          ? t("对话尚未加载")
+                          : t("实时状态未知")
+                        : t("本地对话")}
               </span>
               <span className="card-time">
                 <Clock3 size={11} />
-                {relativeTime(thread.updatedAt)}
+                {relativeTime(thread.updatedAt, language)}
               </span>
             </span>
           </button>
@@ -687,17 +719,17 @@ function Lane({
             </span>
             <span>
               {unreadUnknown
-                ? "未读来源待选择"
+                ? t("未读来源待选择")
                 : column.id === "unread"
-                  ? "暂无未读对话"
-                  : "暂无对话"}
+                  ? t("暂无未读对话")
+                  : t("暂无对话")}
             </span>
             <small>
-              {unreadUnknown ? "选择当前客户端对应的记录" : column.detail}
+              {unreadUnknown ? t("选择当前客户端对应的记录") : column.detail}
             </small>
             {unreadUnknown && (
               <button className="source-link" onClick={onConfigure}>
-                选择未读来源
+                {t("选择未读来源")}
                 <ChevronRight size={12} />
               </button>
             )}
@@ -705,7 +737,9 @@ function Lane({
         )}
         {threads.length > limit && (
           <button className="load-more" onClick={() => setLimit(limit + 20)}>
-            再显示 {Math.min(20, threads.length - limit)} 条
+            {t("再显示 {count} 条", {
+              count: Math.min(20, threads.length - limit),
+            })}
             <ChevronRight size={12} />
           </button>
         )}
@@ -722,6 +756,7 @@ function Modal({
   onClose: () => void;
   children: React.ReactNode;
 }) {
+  const { t } = useI18n();
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const node = ref.current!;
@@ -743,7 +778,11 @@ function Modal({
       <div className="modal-inner">
         <header className="modal-heading">
           <span>{title}</span>
-          <button className="icon-button" aria-label="关闭" onClick={onClose}>
+          <button
+            className="icon-button"
+            aria-label={t("关闭")}
+            onClick={onClose}
+          >
             <X size={18} />
           </button>
         </header>
@@ -762,22 +801,26 @@ function ReadSourcePicker({
   value: string | null;
   onChange: (value: string | null) => void;
 }) {
+  const { t } = useI18n();
   return (
     <label className="read-source-picker">
-      未读记录来源
+      {t("未读记录来源")}
       <select
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value || null)}
       >
-        <option value="">自动（仅有唯一记录时启用）</option>
+        <option value="">{t("自动（仅有唯一记录时启用）")}</option>
         {sources?.unreadOptions?.map((option) => (
           <option key={option.key} value={option.key}>
-            {option.label} · {option.count} 条未读
+            {option.label.replace(/^本地记录/, t("本地记录"))} ·{" "}
+            {t("{count} 条未读", { count: option.count })}
           </option>
         ))}
       </select>
       <span>
-        多份本地记录时，请选择与你当前客户端对应的记录；无法确认时保持自动，未读将显示为未知。
+        {t(
+          "多份本地记录时，请选择与你当前客户端对应的记录；无法确认时保持自动，未读将显示为未知。",
+        )}
       </span>
     </label>
   );
@@ -793,4 +836,8 @@ if (window.parent === window) {
   media.addEventListener("change", apply);
 }
 
-createRoot(document.getElementById("root")!).render(<Board />);
+createRoot(document.getElementById("root")!).render(
+  <LanguageProvider>
+    <Board />
+  </LanguageProvider>,
+);

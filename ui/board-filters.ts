@@ -2,6 +2,7 @@ import {
   belongsToColumn,
   columnFor,
   type BoardColumn,
+  type BoardScope,
   type Thread,
 } from "../shared/types";
 import type { FilterValue } from "./vendor/affectui/filter-menu";
@@ -9,10 +10,22 @@ import type { FilterValue } from "./vendor/affectui/filter-menu";
 export function isColumnVisible(
   column: BoardColumn,
   states: string[] = [],
+  scope: BoardScope = "all",
 ): boolean {
+  if (
+    scope === "attention" &&
+    column !== "waiting" &&
+    column !== "unread" &&
+    column !== "error"
+  )
+    return false;
   if (!states.length) return column !== "unknown";
   if (column === "unread")
-    return states.includes("idle") || states.includes("unknown");
+    return (
+      states.includes("idle") ||
+      states.includes("unknown") ||
+      (scope === "attention" && states.includes("running"))
+    );
   return states.includes(column);
 }
 

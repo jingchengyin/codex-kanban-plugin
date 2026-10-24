@@ -136,6 +136,26 @@ input {
   display: flex;
   align-items: center;
   gap: 8px;
+  margin-left: auto;
+}
+.language-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  min-height: 34px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.language-picker select {
+  min-height: 34px;
+  padding: 6px 7px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--surface);
+  cursor: pointer;
 }
 .search {
   display: flex;

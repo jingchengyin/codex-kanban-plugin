@@ -61,12 +61,24 @@ export type Snapshot = {
 };
 export type Column = "waiting" | "running" | "idle" | "error" | "unknown";
 export type BoardColumn = Column | "unread";
+export type BoardScope = "all" | "attention";
 
-export function belongsToColumn(thread: Thread, column: BoardColumn): boolean {
+export function needsAttention(thread: Thread): boolean {
+  const column = columnFor(thread);
+  return thread.unread === true || column === "waiting" || column === "error";
+}
+
+export function belongsToColumn(
+  thread: Thread,
+  column: BoardColumn,
+  scope: BoardScope = "all",
+): boolean {
   const runtimeColumn = columnFor(thread);
   const assignedColumn =
     thread.unread === true &&
-    (runtimeColumn === "idle" || runtimeColumn === "unknown")
+    (runtimeColumn === "idle" ||
+      runtimeColumn === "unknown" ||
+      (scope === "attention" && runtimeColumn === "running"))
       ? "unread"
       : runtimeColumn;
   return assignedColumn === column;

@@ -1,4 +1,5 @@
 import type { Thread } from "../shared/types";
+import { translate, type Language } from "./i18n";
 
 export const goalLabels = {
   active: "目标模式",
@@ -32,20 +33,36 @@ export function elapsedMs(thread: Thread, now = Date.now()): number | null {
   return Number.isFinite(elapsed) ? Math.max(0, elapsed) : null;
 }
 
-export function formatTokens(tokens: number | null): string {
+export function formatTokens(
+  tokens: number | null,
+  language: Language = "CN",
+): string {
   return tokens === null
-    ? "Token 未知"
+    ? translate(language, "Token 未知")
     : `${new Intl.NumberFormat("en", { notation: "compact", maximumFractionDigits: 1 }).format(tokens)} tokens`;
 }
 
-export function formatDuration(ms: number | null): string {
-  if (ms === null) return "耗时未知";
+export function formatDuration(
+  ms: number | null,
+  language: Language = "CN",
+): string {
+  if (ms === null) return translate(language, "耗时未知");
   const seconds = Math.floor(Math.max(0, ms) / 1000);
-  if (seconds < 60) return `${seconds}秒`;
+  if (seconds < 60) return translate(language, "{count}秒", { count: seconds });
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}分${seconds % 60}秒`;
+  if (minutes < 60)
+    return translate(language, "{minutes}分{seconds}秒", {
+      minutes,
+      seconds: seconds % 60,
+    });
   const hours = Math.floor(minutes / 60);
   return hours < 24
-    ? `${hours}时${minutes % 60}分`
-    : `${Math.floor(hours / 24)}天${hours % 24}时`;
+    ? translate(language, "{hours}时{minutes}分", {
+        hours,
+        minutes: minutes % 60,
+      })
+    : translate(language, "{days}天{hours}时", {
+        days: Math.floor(hours / 24),
+        hours: hours % 24,
+      });
 }
