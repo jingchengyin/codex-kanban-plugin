@@ -89,7 +89,7 @@ for (const desktopPath of [false, true]) {
         const installed = run([
           "plugin",
           "add",
-          "codex-taskboard@codex-kanban-plugin",
+          "codex-kanban-plugin@codex-kanban-plugin",
           "--json",
         ]);
         assert.ok(

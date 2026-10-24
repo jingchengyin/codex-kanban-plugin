@@ -9,7 +9,7 @@ const pkg = JSON.parse(await readFile(resolve(root, "package.json"), "utf8"));
 const catalog = JSON.parse(
   await readFile(resolve(root, ".agents/plugins/marketplace.json"), "utf8"),
 );
-const plugin = resolve(root, "plugins/codex-taskboard");
+const plugin = resolve(root, "plugins", pkg.name);
 await rm(plugin, { recursive: true, force: true });
 await mkdir(plugin, { recursive: true });
 for (const path of [
@@ -44,8 +44,9 @@ await cp(resolve(root, "dist/ui"), resolve(plugin, "runtime/ui"), {
   recursive: true,
 });
 const mcp = JSON.parse(await readFile(resolve(root, ".mcp.json"), "utf8"));
-mcp.mcpServers[pkg.name].args = ["./scripts/start-mcp.sh"];
-mcp.mcpServers[pkg.name].cwd = ".";
+// Keep the MCP identity stable for existing board views and preferences.
+mcp.mcpServers["codex-taskboard"].args = ["./scripts/start-mcp.sh"];
+mcp.mcpServers["codex-taskboard"].cwd = ".";
 await writeFile(
   resolve(plugin, ".mcp.json"),
   JSON.stringify(mcp, null, 2) + "\n",
@@ -121,7 +122,7 @@ await writeFile(
 
 // Retain the existing offline marketplace and ZIP installation options.
 const marketplace = resolve(root, "releases/marketplace");
-const localPlugin = resolve(marketplace, "plugins/codex-taskboard");
+const localPlugin = resolve(marketplace, "plugins", pkg.name);
 await rm(localPlugin, { recursive: true, force: true });
 await cp(plugin, localPlugin, { recursive: true });
 await mkdir(resolve(marketplace, ".agents/plugins"), { recursive: true });
@@ -137,7 +138,7 @@ await writeFile(
     2,
   ) + "\n",
 );
-const zip = resolve(root, `releases/codex-taskboard-${pkg.version}.zip`);
+const zip = resolve(root, `releases/${pkg.name}-${pkg.version}.zip`);
 await rm(zip, { force: true });
 execFileSync("/usr/bin/zip", ["-qr", zip, "."], { cwd: plugin });
 console.log(

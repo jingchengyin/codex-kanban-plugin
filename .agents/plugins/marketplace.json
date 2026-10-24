@@ -5,10 +5,10 @@
   },
   "plugins": [
     {
-      "name": "codex-taskboard",
+      "name": "codex-kanban-plugin",
       "source": {
         "source": "local",
-        "path": "./plugins/codex-taskboard"
+        "path": "./plugins/codex-kanban-plugin"
       },
       "policy": {
         "installation": "AVAILABLE",

@@ -24,15 +24,17 @@
 
 ```sh
 codex plugin marketplace add jingchengyin/codex-kanban-plugin --ref main
-codex plugin add codex-taskboard@codex-kanban-plugin
+codex plugin add codex-kanban-plugin@codex-kanban-plugin
 ```
+
+Codex 安装插件时必须指定市场（`@市场名` 或 `-m 市场名`）。本插件和市场均命名为 `codex-kanban-plugin`。
 
 ### 接入实时状态
 
 打开独立终端并运行：
 
 ```sh
-cd ~/.codex/plugins/cache/codex-kanban-plugin/codex-taskboard/0.1.2
+cd ~/.codex/plugins/cache/codex-kanban-plugin/codex-kanban-plugin/0.1.3
 npm run codex-kanban-plugin
 ```
 

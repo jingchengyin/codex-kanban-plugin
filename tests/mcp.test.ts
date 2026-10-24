@@ -14,7 +14,9 @@ for (const packaged of [false, true]) {
     let args = [resolve("dist/server/index.js")];
     if (packaged) {
       const plugin = join(home, "installed plugin with spaces");
-      await cp(resolve("plugins/codex-taskboard"), plugin, { recursive: true });
+      await cp(resolve("plugins/codex-kanban-plugin"), plugin, {
+        recursive: true,
+      });
       const config = JSON.parse(
         await readFile(join(plugin, ".mcp.json"), "utf8"),
       );

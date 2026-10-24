@@ -24,15 +24,17 @@ Or install with the CLI:
 
 ```sh
 codex plugin marketplace add jingchengyin/codex-kanban-plugin --ref main
-codex plugin add codex-taskboard@codex-kanban-plugin
+codex plugin add codex-kanban-plugin@codex-kanban-plugin
 ```
+
+Codex requires a marketplace selector (`@marketplace` or `-m marketplace`). Both the plugin and its marketplace are named `codex-kanban-plugin`.
 
 ### Connect live status
 
 Open a separate terminal and run:
 
 ```sh
-cd ~/.codex/plugins/cache/codex-kanban-plugin/codex-taskboard/0.1.2
+cd ~/.codex/plugins/cache/codex-kanban-plugin/codex-kanban-plugin/0.1.3
 npm run codex-kanban-plugin
 ```
 
