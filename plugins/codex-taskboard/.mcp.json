@@ -1,9 +1,9 @@
 {
   "mcpServers": {
     "codex-taskboard": {
-      "command": "node",
+      "command": "/bin/sh",
       "args": [
-        "./runtime/server/index.mjs"
+        "./scripts/start-mcp.sh"
       ],
       "cwd": ".",
       "env_vars": [

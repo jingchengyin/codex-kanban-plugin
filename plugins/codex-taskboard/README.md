@@ -36,7 +36,7 @@ npm run preview
 
 ### 从 GitHub 安装
 
-需要本机已安装 Node.js >= 22.13，且 Codex 能从 `PATH` 找到 `node`。仓库已包含市场清单和自包含发行包，安装插件时无需下载 npm 依赖或运行构建命令。
+需要本机已安装 Node.js >= 22.13。启动器会先检查 `PATH` 中的 Node，再检查 NVM 安装和常见 Homebrew Node 路径；桌面端找到旧 Node 时会继续寻找兼容版本，无需加载 shell 配置。仓库已包含市场清单和自包含发行包，安装插件时无需下载 npm 依赖或运行构建命令。
 
 在「添加插件市场」中填写：
 
@@ -65,7 +65,7 @@ codex plugin marketplace add ./releases/marketplace
 codex plugin add codex-taskboard@codex-taskboard-local
 ```
 
-打包会先构建源码，再生成 `plugins/codex-taskboard/` 自包含发行包、`releases/codex-taskboard-0.1.1.zip` 和本地 marketplace。服务端依赖已内联到 `runtime/server/index.mjs`，页面、字体和样式已内联到 `runtime/ui/index.html`；包内不需要 `node_modules`，不会执行安装脚本。第三方许可原文位于 `licenses/`。包内不包含对话记录、测试证据、截图或 Codex 凭据。
+打包会先构建源码，再生成 `plugins/codex-taskboard/` 自包含发行包、`releases/codex-taskboard-0.1.2.zip` 和本地 marketplace。服务端依赖已内联到 `runtime/server/index.mjs`，页面、字体和样式已内联到 `runtime/ui/index.html`；包内不需要 `node_modules`，不会执行安装脚本。第三方许可原文位于 `licenses/`。包内不包含对话记录、测试证据、截图或 Codex 凭据。
 
 发布更新时，请在源码仓库运行 `npm run package:plugin` 并提交重新生成的 `plugins/codex-taskboard/`。仓库根目录的 `.agents/plugins/marketplace.json` 指向该发行目录，使用 GitHub 安装的用户会从那里获取运行文件。可用 `codex plugin marketplace upgrade codex-kanban-plugin` 刷新市场，并在插件管理中更新或重新安装插件。
 
@@ -81,7 +81,7 @@ codex plugin add codex-taskboard@codex-taskboard-local
 npm run codex-kanban-plugin
 ```
 
-通过 GitHub 安装后，运行文件也包含此命令；在终端进入插件安装目录后执行即可。本发行版默认安装位置为 `~/.codex/plugins/cache/codex-kanban-plugin/codex-taskboard/0.1.1/`，实际路径以安装命令输出中的 `installedPath` 为准。源码仓库和安装目录均无需额外安装依赖来运行共享启动命令。
+通过 GitHub 安装后，运行文件也包含此命令；在终端进入插件安装目录后执行即可。本发行版默认安装位置为 `~/.codex/plugins/cache/codex-kanban-plugin/codex-taskboard/0.1.2/`，实际路径以安装命令输出中的 `installedPath` 为准。源码仓库和安装目录均无需额外安装依赖来运行共享启动命令。
 
 命令会启动共享后端，并自动以共享模式打开 Codex。如果 Codex 已打开，终端会等待你按 `⌘Q` 完全退出，然后自动继续启动，无需复制第二条命令。打开「对话看板」，等待「实时已连接」。`npm run live` 保留为兼容别名。
 
@@ -125,6 +125,8 @@ python3 -m unittest discover -s tests -v
 自动测试包括临时 SQLite 索引、真实本机测试 WebSocket、审批不代答、失败恢复、断线快照失效、未读身份隔离，以及打包后真实 MCP stdio 的 tools/list、resources/read、tools/call。测试 WebSocket 的待确认/异常样本是受控协议样本，不等于已经在用户桌面实测这些状态。
 
 运行 MCP 测试前先执行 `npm run package:plugin`。同一组 MCP 检查也会把 GitHub 发行目录复制到仓库之外、含空格的临时路径，从不含依赖的目录启动，验证安装包可以独立运行。
+
+原生 Codex 安装测试分别使用终端 PATH 和含旧 Node 的精简桌面 PATH，后者通过临时 NVM 安装寻找兼容 Node；两种环境均需由官方 App Server 成功初始化插件、发现三个工具和看板资源。
 
 macOS 安装了随附 CLI 时，还会通过 Python 标准库创建真实终端，验证官方后端启动、WebSocket 连接、等待现有桌面退出后继续启动、退出后自动清理、已有后端复用、重复命令与端口冲突。测试使用临时数据目录和随机端口，桌面启动及退出由测试替身模拟，不退出或重开用户的 Codex。
 

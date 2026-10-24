@@ -1,6 +1,6 @@
 {
   "name": "codex-taskboard",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "本机 Codex 对话状态看板：运行、待确认、未读与异常。",
   "author": { "name": "Codex Taskboard" },
   "license": "MIT",

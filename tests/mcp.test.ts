@@ -10,6 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 for (const packaged of [false, true]) {
   test(`${packaged ? "isolated GitHub distribution" : "built plugin"} exposes sidebar/panel metadata, inline self-contained HTML, and read-only snapshots over real MCP stdio`, async () => {
     const home = await mkdtemp(join(tmpdir(), "taskboard-mcp-"));
+    let command = process.execPath;
     let args = [resolve("dist/server/index.js")];
     if (packaged) {
       const plugin = join(home, "installed plugin with spaces");
@@ -17,6 +18,7 @@ for (const packaged of [false, true]) {
       const config = JSON.parse(
         await readFile(join(plugin, ".mcp.json"), "utf8"),
       );
+      command = config.mcpServers["codex-taskboard"].command;
       args = config.mcpServers["codex-taskboard"].args.map((arg: string) =>
         resolve(plugin, arg),
       );
@@ -29,7 +31,7 @@ for (const packaged of [false, true]) {
     });
     const port = (unavailable.address() as net.AddressInfo).port;
     const transport = new StdioClientTransport({
-      command: process.execPath,
+      command,
       args,
       cwd: home,
       env: {

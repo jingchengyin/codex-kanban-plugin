@@ -1,13 +1,13 @@
 {
   "name": "codex-taskboard",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=22.13"
   },
   "scripts": {
-    "start": "node runtime/server/index.mjs",
+    "start": "sh scripts/start-mcp.sh",
     "codex-kanban-plugin": "node scripts/start-live.mjs",
     "live": "npm run codex-kanban-plugin"
   }

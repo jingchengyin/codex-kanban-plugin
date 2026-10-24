@@ -43,7 +43,7 @@ await cp(resolve(root, "dist/ui"), resolve(plugin, "runtime/ui"), {
   recursive: true,
 });
 const mcp = JSON.parse(await readFile(resolve(root, ".mcp.json"), "utf8"));
-mcp.mcpServers[pkg.name].args = ["./runtime/server/index.mjs"];
+mcp.mcpServers[pkg.name].args = ["./scripts/start-mcp.sh"];
 mcp.mcpServers[pkg.name].cwd = ".";
 await writeFile(
   resolve(plugin, ".mcp.json"),
@@ -59,7 +59,7 @@ await writeFile(
       type: "module",
       engines: pkg.engines,
       scripts: {
-        start: "node runtime/server/index.mjs",
+        start: "sh scripts/start-mcp.sh",
         "codex-kanban-plugin": pkg.scripts["codex-kanban-plugin"],
         live: pkg.scripts.live,
       },
@@ -69,7 +69,7 @@ await writeFile(
   ) + "\n",
 );
 await mkdir(resolve(plugin, "scripts"), { recursive: true });
-for (const path of ["start-live.mjs", "kanban-launcher.mjs"]) {
+for (const path of ["start-live.mjs", "kanban-launcher.mjs", "start-mcp.sh"]) {
   await cp(resolve(root, "scripts", path), resolve(plugin, "scripts", path));
 }
 
