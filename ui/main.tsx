@@ -305,24 +305,24 @@ function Board() {
               >
                 {t("刷新")}
               </Button>
-              <label className="language-picker">
-                <span>Language</span>
-                <select
-                  aria-label="Language"
-                  value={language}
-                  onChange={(event) =>
-                    setLanguage(event.target.value === "CN" ? "CN" : "EN")
-                  }
-                >
-                  <option value="EN" lang="en">
-                    EN
-                  </option>
-                  <option value="CN" lang="zh-CN">
-                    CN
-                  </option>
-                </select>
-              </label>
             </div>
+            <label className="language-picker">
+              <span>Language</span>
+              <select
+                aria-label="Language"
+                value={language}
+                onChange={(event) =>
+                  setLanguage(event.target.value === "CN" ? "CN" : "EN")
+                }
+              >
+                <option value="EN" lang="en">
+                  EN
+                </option>
+                <option value="CN" lang="zh-CN">
+                  CN
+                </option>
+              </select>
+            </label>
           </div>
           {fetchError && (
             <div className="data-notice" role="alert">

@@ -773,7 +773,11 @@ input {
 }
 @media (max-width: 1050px) {
   .toolbar-actions {
-    flex: 1;
+    order: 1;
+    flex: 1 0 100%;
+  }
+  .language-picker {
+    margin-left: auto;
   }
   .search {
     flex: 1;
@@ -788,6 +792,9 @@ input {
   }
   .board-toolbar {
     gap: 10px;
+  }
+  .language-picker > span {
+    display: none;
   }
   .toolbar-actions {
     flex: 0 0 100%;
