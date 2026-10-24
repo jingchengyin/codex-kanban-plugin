@@ -119,6 +119,10 @@ test("local reader joins per-turn metrics and goal lifecycle without exposing go
         collaboration_mode_kind: "plan",
       }) +
         record({
+          type: "user_message",
+          message: "本轮的真实用户输入\n第二行",
+        }) +
+        record({
           type: "token_count",
           info: { total_token_usage: { total_tokens: 123 } },
         }) +
@@ -128,6 +132,10 @@ test("local reader joins per-turn metrics and goal lifecycle without exposing go
     assert.equal(data.threads[0].collaborationMode, "plan");
     assert.equal(data.threads[0].goalStatus, "paused");
     assert.equal(data.threads[0].turnUsage?.tokens, 123);
+    assert.equal(
+      data.threads[0].turnUsage?.userInput,
+      "本轮的真实用户输入\n第二行",
+    );
     assert.equal(data.threads[0].turnUsage?.durationMs, 4567);
     assert.equal(JSON.stringify(data).includes("PRIVATE"), false);
     goals.prepare("UPDATE thread_goals SET status=?").run("budget_limited");
@@ -258,7 +266,13 @@ test("real WebSocket notifications update waiting/running/error, ignore approval
     assert.equal((await bridge.snapshot()).threads[0].goalStatus, null);
     assert.deepEqual(
       [...new Set(received.map((message) => message.method))].sort(),
-      ["initialize", "initialized", "thread/loaded/list", "thread/read"],
+      [
+        "initialize",
+        "initialized",
+        "thread/loaded/list",
+        "thread/read",
+        "thread/turns/list",
+      ],
     );
   } finally {
     bridge.stop();
@@ -268,7 +282,7 @@ test("real WebSocket notifications update waiting/running/error, ignore approval
   }
 });
 
-test("async question dialogs override ordinary active status, survive hydration/reconnect, and clear on replies or turn end", async () => {
+test("async question dialogs survive completed idle turns and reconnect, and clear on replies or new turns", async () => {
   const home = await fixture();
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 });
   await new Promise<void>((resolve) => server.once("listening", resolve));
@@ -278,9 +292,12 @@ test("async question dialogs override ordinary active status, survive hydration/
     home,
     endpoint: `ws://127.0.0.1:${address.port}`,
   });
+  let nativeStatus: { type: "active" | "idle"; activeFlags?: string[] } = {
+    type: "idle",
+  };
   let turn = {
     id: "async-turn",
-    status: "inProgress",
+    status: "completed",
     items: [
       {
         type: "agentMessage",
@@ -319,7 +336,7 @@ test("async question dialogs override ordinary active status, survive hydration/
           thread: {
             id,
             cwd: "/work/project",
-            status: { type: "active", activeFlags: [] },
+            status: nativeStatus,
           },
         },
       };
@@ -349,6 +366,7 @@ test("async question dialogs override ordinary active status, survive hydration/
   try {
     bridge.start();
     await until(async () => (await column()) === "waiting");
+    assert.equal((await bridge.snapshot()).threads[0].runtime?.type, "idle");
     assert.equal(
       JSON.stringify(await bridge.snapshot()).includes("PRIVATE"),
       false,
@@ -371,18 +389,18 @@ test("async question dialogs override ordinary active status, survive hydration/
     const refreshing = refresh();
     await until(async () => !!releaseRead);
     item(reply);
-    await until(async () => (await column()) === "running");
+    await until(async () => (await column()) === "idle");
     releaseRead!();
     await refreshing;
     assert.equal(
       await column(),
-      "running",
+      "idle",
       "stale hydration must not undo a live reply",
     );
     holdRead = false;
     turn.items.push(reply);
     await refresh();
-    assert.equal(await column(), "running");
+    assert.equal(await column(), "idle");
 
     const nextQuestion = {
       type: "agentMessage",
@@ -391,20 +409,26 @@ test("async question dialogs override ordinary active status, survive hydration/
     };
     item(nextQuestion);
     await until(async () => (await column()) === "waiting");
+    turn.items.push(nextQuestion);
     notify("turn/completed", {
       threadId: id,
       turn: { id: turn.id, status: "completed" },
     });
     turn.status = "completed";
-    await until(async () => (await column()) === "running");
+    assert.equal(await column(), "waiting");
     await refresh();
     assert.equal(
       await column(),
-      "running",
-      "completed turns cannot retain pending dialogs",
+      "waiting",
+      "completed turns retain unanswered dialogs until the user responds",
     );
 
     turn = { id: "new-turn", status: "inProgress", items: [] };
+    nativeStatus = { type: "active", activeFlags: [] };
+    notify("thread/status/changed", {
+      threadId: id,
+      status: { type: "active", activeFlags: [] },
+    });
     notify("turn/started", { threadId: id, turn: { id: turn.id } });
     item(nextQuestion, "async-turn");
     await refresh();
@@ -425,7 +449,14 @@ test("async question dialogs override ordinary active status, survive hydration/
       "older servers retain live question evidence",
     );
     notify("thread/status/changed", { threadId: id, status: { type: "idle" } });
-    await until(async () => (await column()) === "idle");
+    await until(
+      async () => (await bridge.snapshot()).threads[0].runtime?.type === "idle",
+    );
+    assert.equal(
+      await column(),
+      "waiting",
+      "idle notifications do not answer a question",
+    );
     assert.deepEqual(
       [...new Set(received.map((message) => message.method))].sort(),
       [

@@ -87,6 +87,23 @@ test("stale, absent and unloaded runtime never become idle or thread failures", 
     "error",
   );
 });
+test("unanswered async dialogs need attention even when the native thread is idle", () => {
+  const pending: Thread = {
+    ...thread,
+    unread: true,
+    pendingUserInput: true,
+    runtime: { type: "idle" },
+  };
+  assert.equal(columnFor(pending), "waiting");
+  assert.equal(belongsToColumn(pending, "waiting"), true);
+  assert.equal(belongsToColumn(pending, "unread"), false);
+  assert.equal(columnFor({ ...pending, pendingUserInput: false }), "idle");
+  assert.equal(columnFor({ ...pending, fresh: false }), "unknown");
+  assert.equal(
+    columnFor({ ...pending, runtime: { type: "notLoaded" } }),
+    "unknown",
+  );
+});
 test("unread ambiguity remains unknown; multiple identities or hosts are never merged", () => {
   const state = (accounts: object) => ({
     "electron-thread-read-state-v1": { unreadByIdentity: accounts },

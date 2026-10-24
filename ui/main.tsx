@@ -509,7 +509,7 @@ function Board() {
           </p>
           <div className="data-boundary">
             <ShieldCheck size={16} />
-            <span>不读取对话正文 · 不处理审批 · 不修改 Codex 数据</span>
+            <span>仅展示本机数据 · 不处理审批 · 不修改 Codex 数据</span>
           </div>
         </Modal>
       )}

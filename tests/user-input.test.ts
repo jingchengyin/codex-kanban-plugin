@@ -24,7 +24,7 @@ const answer = (index: number) => ({
   answer: "PRIVATE_ANSWER",
 });
 
-test("async questions require every question to be answered or skipped, without retaining content", () => {
+test("async questions require a submitted reply for each question, including empty answers, without retaining content", () => {
   const pending = inputState("turn", [question]);
   assert.equal(hasUnansweredInput(pending), true);
   const partial = inputState("turn", [reply(answer(0))], pending);

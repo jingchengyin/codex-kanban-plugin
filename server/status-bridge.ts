@@ -197,7 +197,8 @@ export class StatusBridge {
         at: now(),
         error: previous?.error ?? null,
       });
-      if (thread.status.type !== "active") this.userInput.delete(thread.id);
+      if (!["active", "idle"].includes(thread.status.type))
+        this.userInput.delete(thread.id);
     }
     this.ephemeral.set(thread.id, {
       id: thread.id,
@@ -287,7 +288,7 @@ export class StatusBridge {
         at: now(),
         error: this.runtime.get(params.threadId)?.error ?? null,
       });
-      if (params.status.type !== "active")
+      if (!["active", "idle"].includes(params.status.type))
         this.userInput.delete(params.threadId);
     }
     if (method === "turn/started" && typeof params.threadId === "string") {
@@ -301,7 +302,9 @@ export class StatusBridge {
       (method === "item/started" || method === "item/completed") &&
       typeof params.threadId === "string" &&
       typeof params.turnId === "string" &&
-      this.runtime.get(params.threadId)?.status.type === "active"
+      ["active", "idle"].includes(
+        this.runtime.get(params.threadId)?.status.type ?? "",
+      )
     ) {
       const previous = this.userInput.get(params.threadId);
       if (!previous || previous.turnId === params.turnId)
@@ -310,11 +313,9 @@ export class StatusBridge {
           inputState(params.turnId, [params.item], previous),
         );
     }
-    if (method === "turn/completed" || method === "thread/closed") {
-      const previous = this.userInput.get(params.threadId);
-      if (!params.turn?.id || previous?.turnId === params.turn.id)
-        this.userInput.delete(params.threadId);
-    }
+    // Async dialogs can outlive their generating turn. Completion alone does
+    // not mean the user has answered; only unload or a new turn resets them.
+    if (method === "thread/closed") this.userInput.delete(params.threadId);
     if (
       method === "turn/completed" &&
       params.turn?.status === "failed" &&
@@ -345,8 +346,7 @@ export class StatusBridge {
             at: now(),
           });
         }
-      // Bound concurrency without resuming any conversation. Only active
-      // threads need the latest turn to recover pending async questions.
+      // Idle threads can still have unanswered dialogs in their latest turn.
       for (let offset = 0; offset < ids.length; offset += 8) {
         await Promise.all(
           ids.slice(offset, offset + 8).map(async (id) => {
@@ -356,7 +356,7 @@ export class StatusBridge {
                 includeTurns: false,
               });
               this.remember(read.thread);
-              if (read.thread?.status?.type === "active")
+              if (["active", "idle"].includes(read.thread?.status?.type))
                 await this.hydrateUserInput(id);
             } catch {
               // A thread can unload between list and read. This is not a host
@@ -379,7 +379,7 @@ export class StatusBridge {
     const epoch = this.inputEpoch.get(threadId);
     try {
       // Async questions are omitted from summary views. Read only the latest
-      // active turn and discard all content after extracting question IDs.
+      // turn, including a completed one, and discard content after extracting IDs.
       const result = await this.request("thread/turns/list", {
         threadId,
         limit: 1,
@@ -390,15 +390,13 @@ export class StatusBridge {
       if (
         this.userInput.get(threadId) !== previous ||
         this.inputEpoch.get(threadId) !== epoch ||
-        this.runtime.get(threadId)?.status.type !== "active"
+        !["active", "idle"].includes(
+          this.runtime.get(threadId)?.status.type ?? "",
+        )
       )
         return;
       const turn = result.data?.[0];
-      if (
-        turn?.status === "inProgress" &&
-        typeof turn.id === "string" &&
-        Array.isArray(turn.items)
-      )
+      if (typeof turn?.id === "string" && Array.isArray(turn.items))
         this.userInput.set(threadId, inputState(turn.id, turn.items));
       else this.userInput.delete(threadId);
     } catch {
@@ -424,19 +422,8 @@ export class StatusBridge {
       if (thread)
         threads.set(id, {
           ...thread,
-          runtime:
-            value.status.type === "active" &&
-            hasUnansweredInput(this.userInput.get(id))
-              ? {
-                  ...value.status,
-                  activeFlags: [
-                    ...new Set([
-                      ...(value.status.activeFlags ?? []),
-                      "waitingOnUserInput",
-                    ]),
-                  ],
-                }
-              : value.status,
+          runtime: value.status,
+          pendingUserInput: hasUnansweredInput(this.userInput.get(id)),
           runtimeAt: value.at,
           fresh: this.connection.state === "connected",
           error: value.error,

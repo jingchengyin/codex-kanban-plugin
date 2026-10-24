@@ -181,12 +181,139 @@ test("explicit per-turn usage takes precedence over a reset thread counter and s
     assert.deepEqual(await new TurnUsageReader().read(path), value);
   }));
 
+test("user input preserves the complete original text and excludes injected context and assistant replies", () =>
+  fixture(async (path, reader) => {
+    const original =
+      "  # 原文标题\n\n```ts\n  const value = '中文🙂';  \n```\n第六行\n" +
+      "继续".repeat(800) +
+      "\n";
+    await writeFile(
+      path,
+      started("current", 10) +
+        line(
+          11,
+          {
+            type: "message",
+            role: "user",
+            content: [
+              { type: "input_text", text: "PRIVATE_INJECTED_CONTEXT" },
+              { type: "input_text", text: original },
+            ],
+            internal_chat_message_metadata_passthrough: {
+              turn_id: "current",
+              content_item_kinds: [
+                "environments.environment_context",
+                "user.text",
+              ],
+            },
+          },
+          "response_item",
+        ) +
+        line(
+          12,
+          {
+            type: "message",
+            role: "assistant",
+            content: [{ type: "output_text", text: "PRIVATE_ASSISTANT_REPLY" }],
+          },
+          "response_item",
+        ) +
+        line(13, {
+          type: "task_complete",
+          turn_id: "current",
+          duration_ms: 3000,
+        }),
+    );
+    const value = await reader.read(path);
+    assert.equal(value.turnUsage?.userInput, original);
+    assert.equal(value.turnUsage?.status, "completed");
+    assert.equal(JSON.stringify(value).includes("PRIVATE"), false);
+    assert.deepEqual(await reader.read(path), value);
+  }));
+
+test("new turns clear old input; late items and question-reply envelopes cannot replace the current prompt", () =>
+  fixture(async (path, reader) => {
+    const message = (id: string, text: string) =>
+      line(
+        11,
+        {
+          type: "message",
+          role: "user",
+          content: [{ type: "input_text", text }],
+          internal_chat_message_metadata_passthrough: {
+            turn_id: id,
+            content_item_kinds: ["user.text"],
+          },
+        },
+        "response_item",
+      );
+    await writeFile(
+      path,
+      started("first", 0) + message("first", "上一轮输入") + tokens(1, 100),
+    );
+    assert.equal((await reader.read(path)).turnUsage?.userInput, "上一轮输入");
+    await appendFile(path, started("current", 10));
+    assert.equal((await reader.read(path)).turnUsage?.userInput, null);
+    await appendFile(
+      path,
+      message("first", "迟到的旧输入") +
+        message("current", "新一轮输入\n  保留缩进"),
+    );
+    assert.equal(
+      (await reader.read(path)).turnUsage?.userInput,
+      "新一轮输入\n  保留缩进",
+    );
+    await appendFile(
+      path,
+      message(
+        "current",
+        '<send_user_message_question_reply>{"answer":"PRIVATE_ANSWER"}</send_user_message_question_reply>',
+      ),
+    );
+    assert.equal(
+      (await reader.read(path)).turnUsage?.userInput,
+      "新一轮输入\n  保留缩进",
+    );
+    const followup =
+      "<environment_context>\n用户自己输入的标签，也保留原文\n</environment_context>";
+    await appendFile(path, message("current", followup));
+    const value = await reader.read(path);
+    assert.equal(value.turnUsage?.userInput, followup);
+    assert.deepEqual(await new TurnUsageReader().read(path), value);
+  }));
+
+test("legacy user messages preserve whitespace and client context messages are excluded", () =>
+  fixture(async (path, reader) => {
+    const original = "  用户的原始文字\n\n- 原样显示  \n";
+    await writeFile(
+      path,
+      started("current", 0) +
+        line(1, { type: "user_message", message: original }) +
+        line(
+          2,
+          {
+            type: "message",
+            role: "user",
+            content: [
+              {
+                type: "input_text",
+                text: "<environment_context>PRIVATE_CONTEXT</environment_context>",
+              },
+            ],
+          },
+          "response_item",
+        ),
+    );
+    assert.equal((await reader.read(path)).turnUsage?.userInput, original);
+  }));
+
 test("active clocks advance, completed clocks freeze, and unavailable runtime does not keep counting", () => {
   const thread = {
     fresh: true,
     runtime: { type: "active", activeFlags: ["waitingOnUserInput"] },
     turnUsage: {
       id: "current",
+      userInput: null,
       status: "inProgress",
       startedAt: at(10),
       completedAt: null,

@@ -35,6 +35,7 @@ export type Thread = {
   turnUsage: TurnUsage | null;
   unread: boolean | null;
   runtime: RuntimeStatus | null;
+  pendingUserInput?: boolean;
   runtimeAt: string | null;
   fresh: boolean;
   error: { message: string; at: string } | null;
@@ -74,6 +75,11 @@ export function belongsToColumn(thread: Thread, column: BoardColumn): boolean {
 export function columnFor(thread: Thread): Column {
   if (!thread.fresh || !thread.runtime) return "unknown";
   if (thread.runtime.type === "systemError" || thread.error) return "error";
+  if (
+    thread.pendingUserInput &&
+    (thread.runtime.type === "active" || thread.runtime.type === "idle")
+  )
+    return "waiting";
   if (thread.runtime.type === "active") {
     return thread.runtime.activeFlags?.some(
       (flag) => flag === "waitingOnApproval" || flag === "waitingOnUserInput",
