@@ -3,6 +3,7 @@ set -eu
 
 taskboard_root=$(CDPATH= cd "$(dirname "$0")/.." && pwd)
 taskboard_entry="$taskboard_root/${1:-runtime/server/index.mjs}"
+[ "$#" -eq 0 ] || shift
 taskboard_path_node=$(command -v node || true)
 
 # Desktop apps may inherit an older system Node instead of the shell's NVM Node.
@@ -22,7 +23,7 @@ do
     require("node:sqlite");
     if (typeof WebSocket !== "function") process.exit(1);
   ' >/dev/null 2>&1; then
-    exec "$taskboard_node" "$taskboard_entry"
+    exec "$taskboard_node" "$taskboard_entry" "$@"
   fi
 done
 

@@ -10,5 +10,19 @@ export default defineConfig({
     emptyOutDir: true,
     assetsInlineLimit: 1000000,
   },
-  server: { proxy: { "/api": "http://127.0.0.1:4318" } },
+  server: {
+    proxy: {
+      "/api": {
+        target: "http://127.0.0.1:4318",
+        changeOrigin: true,
+        configure(proxy) {
+          proxy.on("proxyReq", (request, source) => {
+            // 开发代理只转换来自自身页面的 Origin，保留跨站请求的来源。
+            if (source.headers.origin === `http://${source.headers.host}`)
+              request.setHeader("Origin", "http://127.0.0.1:4318");
+          });
+        },
+      },
+    },
+  },
 });

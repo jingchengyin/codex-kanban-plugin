@@ -1,35 +1,34 @@
-import { spawn, execFileSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { access } from "node:fs/promises";
-import {
-  closeSync,
-  mkdtempSync,
-  openSync,
-  readFileSync,
-  realpathSync,
-} from "node:fs";
-import net from "node:net";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 const app = "/Applications/ChatGPT.app";
 const cliDefault = `${app}/Contents/Resources/codex-cli/CodexCLI.app/Contents/MacOS/codex`;
+const wrapper = fileURLToPath(new URL("start-desktop-cli.sh", import.meta.url));
+const relayPath = fileURLToPath(new URL("desktop-cli.mjs", import.meta.url));
 const pause = (ms) => new Promise((ok) => setTimeout(ok, ms));
 
-export function sharedLaunchArgs(listenUrl) {
+/** 让桌面端生成完整启动配置，再通过转发器连接同一个后端。 */
+export function sharedLaunchArgs(listenUrl, cli = cliDefault) {
   return [
     "-a",
     app,
     "--env",
-    `CODEX_APP_SERVER_WS_URL=${listenUrl}`,
+    "CODEX_APP_SERVER_WS_URL",
+    "--env",
+    "CODEX_APP_SERVER_FORCE_CLI",
+    "--env",
+    `CODEX_CLI_PATH=${wrapper}`,
+    "--env",
+    `TASKBOARD_CODEX_CLI=${cli}`,
     "--env",
     `TASKBOARD_WS_URL=${listenUrl}`,
     ...(process.env.CODEX_HOME
       ? ["--env", `CODEX_HOME=${process.env.CODEX_HOME}`]
       : []),
     ...[
-      "CODEX_APP_SERVER_FORCE_CLI",
       "CODEX_APP_SERVER_USE_LOCAL_DAEMON",
-      "CODEX_CLI_PATH",
       "CODEX_APP_TOOLS_PIPE_PATH",
       "CODEX_TASK_WORKSPACE_VERIFYING_IDENTITY",
       "CODEX_APP_TOOLS_CALLER_HOST_ID",
@@ -53,6 +52,28 @@ export function macDesktop() {
         .map((row) => Number(row[1]));
     },
     connected(pid, port) {
+      // 桌面端使用 stdio；只有它的转发子进程连接 WebSocket。
+      const rows = execFileSync("/bin/ps", ["-axo", "pid=,ppid=,args="], {
+        encoding: "utf8",
+      })
+        .trim()
+        .split("\n")
+        .map((row) => row.trim().match(/^(\d+)\s+(\d+)\s+(.+)$/))
+        .filter(Boolean);
+      const descendants = new Set([pid]);
+      let size;
+      do {
+        size = descendants.size;
+        for (const [, child, parent] of rows)
+          if (descendants.has(Number(parent))) descendants.add(Number(child));
+      } while (size !== descendants.size);
+      const relays = rows
+        .filter(
+          ([, child, , command]) =>
+            descendants.has(Number(child)) && command.includes(relayPath),
+        )
+        .map(([, child]) => Number(child));
+      if (!relays.length) return false;
       try {
         return execFileSync(
           "/usr/sbin/lsof",
@@ -60,7 +81,7 @@ export function macDesktop() {
             "-nP",
             "-a",
             "-p",
-            String(pid),
+            relays.join(","),
             `-iTCP:${port}`,
             "-sTCP:ESTABLISHED",
           ],
@@ -68,14 +89,11 @@ export function macDesktop() {
         ).includes(`->127.0.0.1:${port}`);
       } catch (error) {
         if (error.status === 1) return false;
-        throw new Error("无法确认 Codex 的连接状态，保留现有后端。", {
-          cause: error,
-        });
+        throw new Error("无法确认 Codex 的连接状态。", { cause: error });
       }
     },
-    launch(listenUrl) {
-      // Per-launch environment only. No launchctl, profile, or app settings writes.
-      execFileSync("/usr/bin/open", sharedLaunchArgs(listenUrl), {
+    launch(listenUrl, cli) {
+      execFileSync("/usr/bin/open", sharedLaunchArgs(listenUrl, cli), {
         stdio: "inherit",
       });
     },
@@ -110,6 +128,7 @@ function verifyExistingBackend(pid, cli) {
   throw new Error(`端口已被其他服务占用（PID ${pid}），不会停止或连接该服务。`);
 }
 
+/** 启动桌面端拥有的共享后端，保留定时任务等内置工具的初始化。 */
 export async function runKanbanLauncher({
   desktop = macDesktop(),
   endpoint: address = process.env.TASKBOARD_WS_URL ?? "ws://127.0.0.1:19429",
@@ -117,7 +136,9 @@ export async function runKanbanLauncher({
   pollMs = 500,
 } = {}) {
   if (!process.stdin.isTTY)
-    throw new Error("请在独立 Terminal 中运行 npm run codex-kanban-plugin");
+    throw new Error(
+      "请双击 scripts/Codex Kanban.command，或在独立 Terminal 中运行 npm run codex-kanban-plugin",
+    );
   const endpoint = new URL(address);
   if (
     endpoint.protocol !== "ws:" ||
@@ -131,12 +152,22 @@ export async function runKanbanLauncher({
     Number(endpoint.port) < 1024
   )
     throw new Error("仅支持 ws://127.0.0.1:<port>，端口需在 1024 以上");
-  // URL.toString() adds '/', which the CLI --listen parser rejects.
   const listenUrl = endpoint.origin;
   const port = Number(endpoint.port);
   await access(cli);
-  let existingPid = listenerPid(port);
-  if (existingPid) verifyExistingBackend(existingPid, cli);
+  await access(wrapper);
+  const existingPid = listenerPid(port);
+  if (existingPid) {
+    verifyExistingBackend(existingPid, cli);
+    if (desktop.pids().some((pid) => desktop.connected(pid, port))) {
+      console.log(`Codex 已在共享模式运行：${listenUrl}。`);
+      return;
+    }
+    // 旧启动器的独立后端缺少桌面工具配置，不能复用。
+    throw new Error(
+      `端口 ${port} 已有独立后端（PID ${existingPid}）。请退出旧共享会话并停止旧启动命令，再重试。`,
+    );
+  }
 
   let interrupted = false;
   const interrupt = () => {
@@ -144,176 +175,42 @@ export async function runKanbanLauncher({
   };
   const signals = ["SIGINT", "SIGHUP", "SIGTERM"];
   for (const signal of signals) process.on(signal, interrupt);
-  let server;
-  let exited = false;
-  let exitReason = "启动超时";
-  let logPath;
-  let exitPromise;
-  let launchRequested = false;
-  let sharedPids = [];
   try {
-    const pids = desktop.pids();
-    if (existingPid && pids.some((pid) => desktop.connected(pid, port))) {
-      console.log(
-        `Codex 已在共享模式运行：${listenUrl}（后端 PID ${existingPid}）。`,
-      );
-      return;
-    }
-    if (pids.length) {
+    if (desktop.pids().length) {
       console.log(
         "检测到 Codex 正在运行。请按 ⌘Q 完全退出；本命令会等待退出后自动以共享模式打开。",
       );
       while (desktop.pids().length && !interrupted) await pause(pollMs);
     }
     if (interrupted) return;
-
-    // Another launcher may have started a backend while waiting for the app to quit.
-    existingPid = listenerPid(port);
-    if (existingPid) {
-      verifyExistingBackend(existingPid, cli);
-      console.log(
-        `复用共享后端：${listenUrl}，PID ${existingPid}（本命令不会停止已有服务）。`,
-      );
-    } else {
-      const cleanEnv = Object.fromEntries(
-        [
-          "HOME",
-          "USER",
-          "LOGNAME",
-          "PATH",
-          "SHELL",
-          "TMPDIR",
-          "LANG",
-          "CODEX_HOME",
-        ]
-          .filter((key) => process.env[key])
-          .map((key) => [key, process.env[key]]),
-      );
-      logPath = join(
-        mkdtempSync(join(tmpdir(), "codex-taskboard-live-")),
-        "backend.log",
-      );
-      const fd = openSync(logPath, "wx", 0o600);
-      try {
-        server = spawn(
-          cli,
-          [
-            "-c",
-            "features.code_mode_host=true",
-            "app-server",
-            "--listen",
-            listenUrl,
-          ],
-          {
-            env: cleanEnv,
-            stdio: ["ignore", fd, fd],
-            detached: true,
-          },
-        );
-      } finally {
-        closeSync(fd);
-      }
-      exitPromise = new Promise((ok) => {
-        server.once("error", (error) => {
-          exited = true;
-          exitReason = error.message;
-          ok();
-        });
-        server.once("exit", (code, signal) => {
-          exited = true;
-          exitReason = signal ? `信号 ${signal}` : `退出码 ${code}`;
-          ok();
-        });
-      });
-      const deadline = Date.now() + 10000;
-      let ready = false;
-      while (!ready && !exited && !interrupted && Date.now() < deadline) {
-        ready = await new Promise((ok) => {
-          const socket = net.connect(port, "127.0.0.1");
-          socket.once("connect", () => {
-            socket.destroy();
-            ok(true);
-          });
-          socket.once("error", () => ok(false));
-        });
-        if (!ready) await pause(100);
-      }
-      if (interrupted) return;
-      if (!ready) {
-        const diagnostics = readFileSync(logPath, "utf8").trim().slice(-3000);
-        throw new Error(
-          `共享后端没有启动成功（${exitReason}）。\n后端日志：${logPath}${diagnostics ? `\n${diagnostics}` : ""}`,
-        );
-      }
-      if (exited || listenerPid(port) !== server.pid)
-        throw new Error("监听端口不属于本次共享后端，已停止启动。");
-      console.log(
-        `共享后端已启动：${listenUrl}，专用 PID ${server.pid}。\n后端日志：${logPath}`,
-      );
-    }
-
-    if (interrupted) return;
-    launchRequested = true;
-    await desktop.launch(listenUrl);
+    if (listenerPid(port)) throw new Error(`端口 ${port} 已被占用，请重试。`);
+    await desktop.launch(listenUrl, cli);
     console.log("正在以共享模式打开 Codex…");
     const deadline = Date.now() + 30000;
     let connectedPids = [];
     while (!interrupted && Date.now() < deadline) {
-      if (server && exited)
-        throw new Error(
-          `共享后端已退出（${exitReason}）。后端日志：${logPath}`,
-        );
-      connectedPids = desktop
-        .pids()
-        .filter((pid) => desktop.connected(pid, port));
-      if (connectedPids.length) break;
+      const backendPid = listenerPid(port);
+      if (backendPid) {
+        verifyExistingBackend(backendPid, cli);
+        connectedPids = desktop
+          .pids()
+          .filter((pid) => desktop.connected(pid, port));
+        if (connectedPids.length) break;
+      }
       await pause(pollMs);
     }
     if (interrupted) return;
     if (!connectedPids.length)
-      throw new Error(
-        "Codex 尚未连接共享后端。请完全退出 Codex，再运行 npm run codex-kanban-plugin。",
-      );
-    sharedPids = connectedPids;
+      throw new Error("Codex 尚未连接共享后端。请查看客户端启动日志后重试。");
     console.log(
-      "Codex 共享启动成功，打开「对话看板」即可查看实时状态。\n保持本终端运行；退出本次 Codex 后会自动清理本命令创建的后端。\n以后直接点击 Codex 图标即为普通启动，无需恢复命令。",
+      "Codex 共享启动成功，打开「对话看板」即可查看实时状态。\n后端由 Codex 管理；关闭本终端不影响客户端，退出 Codex 后会自动清理后端。\n以后直接点击 Codex 图标即为普通启动，无需恢复命令。",
     );
     while (
       !interrupted &&
       desktop.pids().some((pid) => connectedPids.includes(pid))
-    ) {
-      if (server && exited)
-        throw new Error(
-          `共享后端已退出（${exitReason}）。后端日志：${logPath}`,
-        );
+    )
       await pause(pollMs);
-    }
   } finally {
     for (const signal of signals) process.off(signal, interrupt);
-    if (server && !exited) {
-      let inUse = true;
-      try {
-        const active = desktop.pids();
-        inUse =
-          active.some(
-            (pid) => sharedPids.includes(pid) || desktop.connected(pid, port),
-          ) ||
-          (launchRequested && !sharedPids.length && active.length > 0);
-      } catch {}
-      if (inUse) {
-        server.unref();
-        console.log(
-          `Codex 仍可能使用共享后端，已保留 PID ${server.pid}。下次运行命令会复用它。`,
-        );
-      } else {
-        server.kill("SIGTERM");
-        const forceStop = setTimeout(() => server.kill("SIGKILL"), 5000);
-        await exitPromise;
-        clearTimeout(forceStop);
-        console.log(
-          "本次共享后端已停止。下次直接点击 Codex 图标即可普通启动。",
-        );
-      }
-    }
   }
 }

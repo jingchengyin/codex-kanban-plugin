@@ -1,7 +1,12 @@
 import { homedir } from "node:os";
 import { basename } from "node:path";
 import { readLocalData } from "./local-data.js";
-import { hasUnansweredInput, inputState } from "./user-input.js";
+import {
+  hasUnansweredInput,
+  inputState,
+  unansweredInput,
+} from "./user-input.js";
+import { columnFor, compareByLastUserMessage } from "../shared/types.js";
 import type {
   ConnectionState,
   RuntimeStatus,
@@ -27,6 +32,7 @@ export function localEndpoint(value: string): string {
   }
   return url.toString();
 }
+/** 同步本机对话运行状态和待答标记，首次打开时加载最近的待同步对话。 */
 export class StatusBridge {
   private socket?: WebSocket;
   private stopped = false;
@@ -43,7 +49,12 @@ export class StatusBridge {
   >();
   private runtime = new Map<
     string,
-    { status: RuntimeStatus; at: string; error: Thread["error"] }
+    {
+      status: RuntimeStatus;
+      at: string;
+      error: Thread["error"];
+      waitingSince: string | null;
+    }
   >();
   private ephemeral = new Map<string, Thread>();
   private userInput = new Map<string, ReturnType<typeof inputState>>();
@@ -59,6 +70,9 @@ export class StatusBridge {
     data: Awaited<ReturnType<typeof readLocalData>>;
   };
   private refreshing?: Promise<void>;
+  private initialSyncRequested = false;
+  private initialSync?: Promise<void>;
+  private initialSyncComplete = false;
   readonly endpoint: string;
   readonly home: string;
 
@@ -158,6 +172,7 @@ export class StatusBridge {
         this.modes.clear();
         this.state("connected");
         await this.hydrate();
+        this.beginInitialSync();
         this.hydration = setInterval(() => {
           void this.hydrate().catch(() => {
             this.state("disconnected", "实时状态查询失败，正在重新连接。");
@@ -183,6 +198,24 @@ export class StatusBridge {
       this.socket!.send(JSON.stringify({ id, method, params }));
     });
   }
+  /** 更新原生状态，只在首次进入等待时记录起点，定期读取不会重置。 */
+  private rememberStatus(threadId: string, status: RuntimeStatus) {
+    const previous = this.runtime.get(threadId);
+    const at = now();
+    const waiting =
+      status.type === "active" &&
+      status.activeFlags?.some(
+        (flag) => flag === "waitingOnApproval" || flag === "waitingOnUserInput",
+      );
+    this.runtime.set(threadId, {
+      status,
+      at,
+      error: previous?.error ?? null,
+      waitingSince: waiting ? (previous?.waitingSince ?? at) : null,
+    });
+    if (!["active", "idle"].includes(status.type))
+      this.userInput.delete(threadId);
+  }
   private remember(thread: any) {
     if (!thread || typeof thread.id !== "string") return;
     if (
@@ -190,16 +223,8 @@ export class StatusBridge {
       ["active", "idle", "notLoaded", "systemError"].includes(
         thread.status.type,
       )
-    ) {
-      const previous = this.runtime.get(thread.id);
-      this.runtime.set(thread.id, {
-        status: thread.status,
-        at: now(),
-        error: previous?.error ?? null,
-      });
-      if (!["active", "idle"].includes(thread.status.type))
-        this.userInput.delete(thread.id);
-    }
+    )
+      this.rememberStatus(thread.id, thread.status);
     this.ephemeral.set(thread.id, {
       id: thread.id,
       title:
@@ -214,6 +239,7 @@ export class StatusBridge {
         typeof thread.updatedAt === "number"
           ? new Date(thread.updatedAt * 1000).toISOString()
           : now(),
+      lastUserMessageAt: null,
       kind:
         typeof thread.source === "object" && thread.source?.subAgent
           ? "agent"
@@ -282,21 +308,16 @@ export class StatusBridge {
       ["active", "idle", "notLoaded", "systemError"].includes(
         params.status?.type,
       )
-    ) {
-      this.runtime.set(params.threadId, {
-        status: params.status,
-        at: now(),
-        error: this.runtime.get(params.threadId)?.error ?? null,
-      });
-      if (!["active", "idle"].includes(params.status.type))
-        this.userInput.delete(params.threadId);
-    }
+    )
+      this.rememberStatus(params.threadId, params.status);
     if (method === "turn/started" && typeof params.threadId === "string") {
       const old = this.runtime.get(params.threadId);
       if (old) old.error = null;
       if (typeof params.turn?.id === "string")
-        this.userInput.set(params.threadId, inputState(params.turn.id, []));
-      else this.userInput.delete(params.threadId);
+        this.userInput.set(
+          params.threadId,
+          inputState(params.turn.id, [], this.userInput.get(params.threadId)),
+        );
     }
     if (
       (method === "item/started" || method === "item/completed") &&
@@ -313,8 +334,7 @@ export class StatusBridge {
           inputState(params.turnId, [params.item], previous),
         );
     }
-    // Async dialogs can outlive their generating turn. Completion alone does
-    // not mean the user has answered; only unload or a new turn resets them.
+    // 本轮结束和自动续跑均不代表用户已回复，待答状态由用户消息解除。
     if (method === "thread/closed") this.userInput.delete(params.threadId);
     if (
       method === "turn/completed" &&
@@ -344,6 +364,7 @@ export class StatusBridge {
             ...state,
             status: { type: "notLoaded" },
             at: now(),
+            waitingSince: null,
           });
         }
       // Idle threads can still have unanswered dialogs in their latest turn.
@@ -374,40 +395,125 @@ export class StatusBridge {
       this.refreshing = undefined;
     }
   }
+  /** 从最近的用户消息或异步提问恢复待答状态，跳过纯助手续跑轮次。 */
   private async hydrateUserInput(threadId: string) {
     const previous = this.userInput.get(threadId);
     const epoch = this.inputEpoch.get(threadId);
     try {
-      // Async questions are omitted from summary views. Read only the latest
-      // turn, including a completed one, and discard content after extracting IDs.
-      const result = await this.request("thread/turns/list", {
-        threadId,
-        limit: 1,
-        sortDirection: "desc",
-        itemsView: "full",
-      });
-      // Live item events or a turn transition take precedence over this read.
-      if (
-        this.userInput.get(threadId) !== previous ||
-        this.inputEpoch.get(threadId) !== epoch ||
-        !["active", "idle"].includes(
-          this.runtime.get(threadId)?.status.type ?? "",
+      let cursor: string | undefined;
+      let latestTurnId: string | undefined;
+      do {
+        // 自动续跑可能只有助手消息，向前查到最近含用户消息或提问的一轮即可。
+        const result = await this.request("thread/turns/list", {
+          threadId,
+          limit: 1,
+          sortDirection: "desc",
+          itemsView: "full",
+          ...(cursor ? { cursor } : {}),
+        });
+        // 实时消息或回合切换优先于尚未完成的历史读取。
+        if (
+          this.userInput.get(threadId) !== previous ||
+          this.inputEpoch.get(threadId) !== epoch ||
+          !["active", "idle"].includes(
+            this.runtime.get(threadId)?.status.type ?? "",
+          )
         )
-      )
-        return;
-      const turn = result.data?.[0];
-      if (typeof turn?.id === "string" && Array.isArray(turn.items))
-        this.userInput.set(threadId, inputState(turn.id, turn.items));
-      else this.userInput.delete(threadId);
+          return;
+        const turn = result.data?.[0];
+        if (typeof turn?.id !== "string" || !Array.isArray(turn.items)) {
+          this.userInput.delete(threadId);
+          return;
+        }
+        latestTurnId ??= turn.id;
+        const state = inputState(latestTurnId!, turn.items);
+        // 历史回读重新计算待答集合，但同一问题沿用本次连接的首次观察时间。
+        for (const [id, question] of state.pending) {
+          const known = previous?.pending.get(id);
+          if (known) question.since = known.since;
+        }
+        cursor = result.nextCursor ?? undefined;
+        if (
+          state.questions.size > 0 ||
+          turn.items.some((item: any) => item?.type === "userMessage") ||
+          !cursor
+        ) {
+          this.userInput.set(threadId, state);
+          return;
+        }
+      } while (cursor);
     } catch {
       // Older servers may not support turn pagination. Keep native flags and
       // any questions already observed on this connection.
     }
   }
+
+  /** 首次打开登记一次同步意图；连接尚未就绪时由连接完成后接续。 */
+  async open(selection: string | null = null): Promise<Snapshot> {
+    this.initialSyncRequested = true;
+    const data = await this.snapshot(selection);
+    this.beginInitialSync();
+    return data;
+  }
+
+  /** 每个看板服务只同步一批，定时快照和重连不会继续加载下一批。 */
+  private beginInitialSync() {
+    if (
+      !this.initialSyncRequested ||
+      this.initialSync ||
+      this.connection.state !== "connected"
+    )
+      return;
+    this.initialSync = this.syncInitialThreads()
+      .catch(() => {
+        // 断连沿用连接状态提示，不让首次同步影响后续快照读取。
+      })
+      .finally(() => {
+        this.initialSyncComplete = true;
+      });
+  }
+
+  /** 最近十五条普通对话按用户消息时间排序，分批加载并读取真实状态。 */
+  private async syncInitialThreads(): Promise<void> {
+    // 先完成已加载对话的状态读取，避免让它们占用首次同步名额。
+    await this.hydrate();
+    const data = await this.snapshot();
+    const threads = data.threads
+      .filter(
+        (thread) => thread.kind === "user" && columnFor(thread) === "unknown",
+      )
+      .sort(compareByLastUserMessage)
+      .slice(0, 15);
+    for (let offset = 0; offset < threads.length; offset += 3) {
+      if (this.connection.state !== "connected") return;
+      await Promise.all(
+        threads.slice(offset, offset + 3).map(async ({ id }) => {
+          try {
+            let read = await this.request("thread/read", {
+              threadId: id,
+              includeTurns: false,
+            });
+            if (read.thread?.status?.type === "notLoaded")
+              // 仅加载运行态，不发送消息，不请求执行回合，也不覆盖会话配置。
+              read = await this.request("thread/resume", {
+                threadId: id,
+                excludeTurns: true,
+              });
+            this.remember(read.thread);
+            if (["active", "idle"].includes(read.thread?.status?.type))
+              await this.hydrateUserInput(id);
+          } catch {
+            // 单条不可加载时仍保留待同步，其余对话继续，且不追加下一批。
+          }
+        }),
+      );
+    }
+  }
+
   async snapshot(selection: string | null = null): Promise<Snapshot> {
     const cached = this.cache;
     const hit =
-      cached && cached.selection === selection && Date.now() - cached.at < 2000;
+      cached && cached.selection === selection && Date.now() - cached.at < 1000;
     const local = hit ? cached.data : await readLocalData(this.home, selection);
     if (!hit) this.cache = { at: Date.now(), selection, data: local };
     const threads = new Map(this.ephemeral);
@@ -419,22 +525,37 @@ export class StatusBridge {
       }
     for (const [id, value] of this.runtime) {
       const thread = threads.get(id);
-      if (thread)
-        threads.set(id, {
+      if (thread) {
+        const pending = unansweredInput(this.userInput.get(id));
+        const merged: Thread = {
           ...thread,
           runtime: value.status,
           pendingUserInput: hasUnansweredInput(this.userInput.get(id)),
           runtimeAt: value.at,
           fresh: this.connection.state === "connected",
           error: value.error,
+        };
+        const waiting = columnFor(merged) === "waiting";
+        threads.set(id, {
+          ...merged,
+          // 断线、卸载和异常仍保留运行快照，但不展示旧问题为当前待处理事项。
+          waitingSince: waiting
+            ? ([value.waitingSince, pending?.since]
+                .filter((at): at is string => typeof at === "string")
+                .sort()[0] ?? null)
+            : null,
+          waitingQuestion: waiting ? (pending?.summary ?? null) : null,
         });
+      }
     }
     return {
       schemaVersion: 1,
       generatedAt: now(),
-      threads: [...threads.values()].sort((a, b) =>
-        b.updatedAt.localeCompare(a.updatedAt),
-      ),
+      syncingThreads:
+        this.initialSyncRequested &&
+        !this.initialSyncComplete &&
+        this.connection.state !== "disconnected",
+      threads: [...threads.values()].sort(compareByLastUserMessage),
       connection: { ...this.connection },
       sources: {
         metadata: local.metadata,

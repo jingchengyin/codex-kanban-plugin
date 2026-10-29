@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   belongsToColumn,
   columnFor,
+  compareByLastUserMessage,
   type BoardColumn,
   type Thread,
 } from "../shared/types";
@@ -15,6 +16,7 @@ const thread: Thread = {
   cwd: "",
   project: "",
   updatedAt: "",
+  lastUserMessageAt: null,
   kind: "user",
   unread: null,
   model: null,
@@ -27,6 +29,49 @@ const thread: Thread = {
   fresh: true,
   error: null,
 };
+test("recent sorting uses user messages, ignores runtime updates, and keeps unknown times last", () => {
+  const threads: Thread[] = [
+    { ...thread, id: "unknown-b", updatedAt: "2026-10-26T12:00:00Z" },
+    {
+      ...thread,
+      id: "older-message",
+      updatedAt: "2026-10-26T12:00:00Z",
+      lastUserMessageAt: "2026-10-26T10:00:00.000Z",
+    },
+    {
+      ...thread,
+      id: "latest-message-b",
+      updatedAt: "2026-10-26T11:00:00Z",
+      lastUserMessageAt: "2026-10-26T11:00:00.000Z",
+    },
+    { ...thread, id: "unknown-a" },
+    {
+      ...thread,
+      id: "latest-message-a",
+      updatedAt: "2026-10-26T11:00:00Z",
+      lastUserMessageAt: "2026-10-26T11:00:00.000Z",
+    },
+  ];
+  const expected = [
+    "latest-message-a",
+    "latest-message-b",
+    "older-message",
+    "unknown-a",
+    "unknown-b",
+  ];
+  assert.deepEqual(
+    threads.sort(compareByLastUserMessage).map((t) => t.id),
+    expected,
+  );
+  assert.deepEqual(
+    threads
+      .map((t) => ({ ...t, updatedAt: "2026-10-26T13:00:00Z" }))
+      .reverse()
+      .sort(compareByLastUserMessage)
+      .map((t) => t.id),
+    expected,
+  );
+});
 test("display titles prefer user names and strip attachment wrappers from fallback labels", () => {
   assert.equal(displayTitle("自定义名称", "initial prompt"), "自定义名称");
   assert.equal(
@@ -129,6 +174,60 @@ test("unread ambiguity remains unknown; multiple identities or hosts are never m
   );
   assert.equal(
     parseUnread(multiple, JSON.stringify(["different-account", "local:y"])).ids,
+    null,
+  );
+});
+test("unread automatic selection reuses ordinary startup records and preserves explicit selections", () => {
+  const ordinaryHost =
+    "local:092af2cb59bdd804c6f7f1cd1d85464b682974e43cd517397d25510024034d1c";
+  const sharedHost =
+    "local:7dc900dd6a290203089e04146af2bfd891d16d31297f87dd05c8ff68065a145f";
+  const cases = [
+    {
+      ordinary: Array.from({ length: 118 }, (_, i) => `ordinary-${i}`),
+      shared: [],
+    },
+    { ordinary: [], shared: ["shared-only"] },
+    { ordinary: ["ordinary-only"], shared: ["shared-only"] },
+  ];
+  for (const { ordinary, shared } of cases) {
+    const state = {
+      "electron-thread-read-state-v1": {
+        unreadByIdentity: {
+          account: { [sharedHost]: shared, [ordinaryHost]: ordinary },
+        },
+      },
+    };
+    const automatic = parseUnread(state);
+    assert.deepEqual([...automatic.ids!], ordinary);
+    assert.deepEqual(
+      automatic.options.map(({ count }) => count),
+      [shared.length, ordinary.length],
+    );
+    assert.deepEqual(
+      [...parseUnread(state, JSON.stringify(["account", sharedHost])).ids!],
+      shared,
+    );
+    assert.equal(
+      parseUnread(state, JSON.stringify(["account", "local:missing"])).ids,
+      null,
+    );
+  }
+});
+test("ordinary startup unread records do not bypass account or format checks", () => {
+  const ordinaryHost =
+    "local:092af2cb59bdd804c6f7f1cd1d85464b682974e43cd517397d25510024034d1c";
+  const state = (accounts: object) => ({
+    "electron-thread-read-state-v1": { unreadByIdentity: accounts },
+  });
+  assert.equal(
+    parseUnread(
+      state({ a: { [ordinaryHost]: ["one"] }, b: { "local:y": ["two"] } }),
+    ).ids,
+    null,
+  );
+  assert.equal(
+    parseUnread(state({ a: { [ordinaryHost]: [8], "local:y": ["two"] } })).ids,
     null,
   );
 });

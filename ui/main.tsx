@@ -8,6 +8,7 @@ import {
   Clock3,
   Cpu,
   Folder,
+  Languages,
   LoaderCircle,
   Radio,
   RefreshCw,
@@ -30,13 +31,43 @@ import {
   belongsToColumn,
   needsAttention,
   waitingLabel,
+  compareByLastUserMessage,
   type BoardColumn,
   type BoardScope,
   type Snapshot,
   type Thread,
 } from "../shared/types";
-import { openConversation, readSnapshot } from "./client";
-import { isColumnVisible, matchesFilters } from "./board-filters";
+import {
+  launchLiveConnection,
+  openConversation,
+  readSnapshot,
+  readThreadArtifacts,
+  readWorkspace,
+} from "./client";
+import type {
+  ArtifactDiscovery,
+  DetectedArtifact,
+  WorkItem,
+  WorkspaceData,
+} from "../shared/work-items";
+import { ThreadWorkItems, ThreadWorkItemPicker } from "./thread-work-items";
+import { ThreadMonitoring } from "./thread-monitoring";
+import { DetectedArtifacts } from "./detected-artifacts";
+import { ArtifactRulesSettings } from "./artifact-rules";
+import { WorkItems, WorkReviewPanel } from "./workspace";
+import {
+  DEFAULT_FILTERS,
+  isColumnVisible,
+  matchesFilters,
+  matchesQuery,
+  compareAttention,
+  activeFilterCount,
+} from "./board-filters";
+import {
+  PREFERENCE_KEY,
+  readBoardPreferences,
+  type BoardPreferences,
+} from "./board-preferences";
 import {
   elapsedMs,
   formatDuration,
@@ -114,20 +145,43 @@ function preference<T>(key: string, fallback: T): T {
 }
 function Board() {
   const { language, setLanguage, locale, t } = useI18n();
+  const [preferences] = useState(() => readBoardPreferences(localStorage));
+  const [view, setView] = useState<BoardPreferences["view"]>(preferences.view);
+  const viewRef = useRef(view);
+  viewRef.current = view;
   const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [discovery, setDiscovery] = useState<ArtifactDiscovery>({
+    artifacts: [],
+    unavailableThreadIds: [],
+  });
+  const [artifactError, setArtifactError] = useState("");
+  const [artifactRevision, setArtifactRevision] = useState(0);
   const [fetchError, setFetchError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
   const [query, setQuery] = useState("");
-  const [scope, setScope] = useState<BoardScope>("all");
-  const [filters, setFilters] = useState<FilterValue>({ kind: ["user"] });
+  const [scope, setScope] = useState<BoardScope>(preferences.scope);
+  const [filters, setFilters] = useState<FilterValue>(preferences.filters);
   const [readSource, setReadSource] = useState<string | null>(() =>
     preference("read-source", null),
   );
   const readSourceRef = useRef(readSource);
-  const [sort, setSort] = useState<"recent" | "title">("recent");
+  const [sort, setSort] = useState<BoardPreferences["sort"]>(preferences.sort);
+  const [layout, setLayout] = useState<BoardPreferences["layout"]>(
+    preferences.layout,
+  );
+  const [narrow, setNarrow] = useState(
+    () => window.matchMedia("(max-width: 900px)").matches,
+  );
+  const listLayout = layout === "list" || (layout === "auto" && narrow);
+  const [addingThread, setAddingThread] = useState<Thread | null>(null);
+  const [workItems, setWorkItems] = useState<WorkItem[]>([]);
+  const [workspaceError, setWorkspaceError] = useState("");
+  const [workspaceRevision, setWorkspaceRevision] = useState(0);
+  const [openItemId, setOpenItemId] = useState<string | null>(null);
   const [settings, setSettings] = useState(false);
   const [filterOpen, setFilterOpen] = useState(false);
   const [toast, setToast] = useState("");
+  const [launching, setLaunching] = useState(false);
   const inFlight = useRef(false);
   const search = useRef<HTMLInputElement>(null);
   async function refresh() {
@@ -135,7 +189,19 @@ function Board() {
     inFlight.current = true;
     setRefreshing(true);
     try {
-      setSnapshot(await readSnapshot(readSourceRef.current));
+      const next = await readSnapshot(readSourceRef.current);
+      // 元数据暂不可读时保留已展示的本地对话，并取消其运行状态认证。
+      setSnapshot((previous) =>
+        !next.sources.metadata && previous
+          ? {
+              ...next,
+              threads: previous.threads.map((thread) => ({
+                ...thread,
+                fresh: false,
+              })),
+            }
+          : next,
+      );
       setFetchError(null);
     } catch (error) {
       setFetchError(
@@ -147,15 +213,71 @@ function Board() {
     }
   }
   useEffect(() => {
+    try {
+      localStorage.setItem(
+        PREFERENCE_KEY,
+        JSON.stringify({ view, scope, filters, sort, layout }),
+      );
+    } catch {
+      /* 存储不可用时仍可继续使用当前视图。 */
+    }
+  }, [view, scope, filters, sort, layout]);
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 900px)");
+    const update = () => setNarrow(media.matches);
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+  // 卡片和事项页共用最新关联结果，切回看板后重新读取持久化记录。
+  useEffect(() => {
+    if (view !== "board") return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const refreshItems = async () => {
+      try {
+        const data = await readWorkspace();
+        if (!cancelled) {
+          setWorkItems(data.items);
+          setWorkspaceError("");
+        }
+      } catch (error) {
+        if (!cancelled)
+          setWorkspaceError(
+            error instanceof Error ? error.message : "读取工作事项失败",
+          );
+      } finally {
+        if (!cancelled) timer = setTimeout(() => void refreshItems(), 15000);
+      }
+    };
+    void refreshItems();
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [view, workspaceRevision]);
+  const updateWorkspace = (data: WorkspaceData) => {
+    setWorkItems(data.items);
+    setWorkspaceError("");
+    setWorkspaceRevision((value) => value + 1);
+  };
+  const openWorkItem = (id: string) => {
+    setOpenItemId(id);
+    setView("items");
+  };
+  useEffect(() => {
     void refresh();
     const timer = setInterval(() => {
       if (!document.hidden) void refresh();
-    }, 2500);
+    }, 1000);
     const visible = () => {
       if (!document.hidden) void refresh();
     };
     const keys = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+      if (
+        (e.metaKey || e.ctrlKey) &&
+        e.key === "k" &&
+        viewRef.current === "board"
+      ) {
         e.preventDefault();
         search.current?.focus();
       }
@@ -184,12 +306,42 @@ function Board() {
       ),
     [snapshot, fetchError],
   );
-  const attentionCount = threads.filter(needsAttention).length;
-  const projects = [...new Set(threads.map((thread) => thread.project))].sort(
-    (a, b) => a.localeCompare(b, locale),
+  // 看板统计和项目选项也只包含普通对话。
+  const boardThreads = useMemo(
+    () => threads.filter((thread) => thread.kind === "user"),
+    [threads],
   );
+  const itemsByThread = useMemo(() => {
+    const map = new Map<string, WorkItem[]>();
+    for (const item of workItems)
+      for (const id of item.threadIds)
+        map.set(id, [...(map.get(id) ?? []), item]);
+    return map;
+  }, [workItems]);
+  const filtered = useMemo(
+    () =>
+      boardThreads.filter(
+        (thread) =>
+          matchesFilters(thread, filters) &&
+          matchesQuery(
+            thread,
+            query,
+            itemsByThread.get(thread.id)?.map((item) => item.title),
+          ),
+      ),
+    [boardThreads, filters, query, itemsByThread],
+  );
+  const attentionCount = filtered.filter(needsAttention).length;
+  const projects = [
+    ...new Set(boardThreads.map((thread) => thread.project)),
+  ].sort((a, b) => a.localeCompare(b, locale));
   const visibleColumns = columns
     .filter((column) => isColumnVisible(column.id, filters.state, scope))
+    .filter(
+      (column) =>
+        column.id !== "unknown" ||
+        filtered.some((thread) => columnFor(thread) === "unknown"),
+    )
     .map((column) => ({
       ...column,
       label: t(column.label),
@@ -197,27 +349,81 @@ function Board() {
     }));
   const displayed = useMemo(
     () =>
-      threads
-        .filter((thread) => {
-          if (scope === "attention" && !needsAttention(thread)) return false;
-          if (!matchesFilters(thread, filters)) return false;
-          return `${thread.title} ${thread.project} ${thread.id}`
-            .toLocaleLowerCase()
-            .includes(query.trim().toLocaleLowerCase());
-        })
+      filtered
+        .filter((thread) => scope !== "attention" || needsAttention(thread))
         .sort((a, b) =>
           sort === "title"
             ? a.title.localeCompare(b.title, locale)
-            : b.updatedAt.localeCompare(a.updatedAt),
+            : sort === "priority"
+              ? compareAttention(a, b)
+              : compareByLastUserMessage(a, b),
         ),
-    [threads, scope, filters, query, sort, locale],
+    [filtered, scope, sort, locale],
+  );
+  // 相同对话集合共用一次批量读取，不随运行状态轮询或排序重启。
+  const artifactThreadKey = JSON.stringify(
+    displayed.map((thread) => thread.id).sort(),
+  );
+  useEffect(() => {
+    if (view !== "board" || artifactThreadKey === "[]") return;
+    const threadIds = JSON.parse(artifactThreadKey) as string[];
+    let cancelled = false;
+    let inFlight = false;
+    let timer: ReturnType<typeof setTimeout>;
+    let delay = 15000;
+    const refreshArtifacts = async () => {
+      if (cancelled || inFlight || document.hidden) return;
+      clearTimeout(timer);
+      inFlight = true;
+      try {
+        const data = await readThreadArtifacts(threadIds);
+        if (cancelled) return;
+        setDiscovery(data);
+        setArtifactError("");
+        delay = data.pendingThreadIds?.length ? 2500 : 15000;
+      } catch (reason) {
+        if (!cancelled)
+          setArtifactError(
+            reason instanceof Error ? reason.message : "读取成果失败",
+          );
+      } finally {
+        inFlight = false;
+        if (!cancelled)
+          timer = setTimeout(() => void refreshArtifacts(), delay);
+      }
+    };
+    const visible = () => {
+      if (!document.hidden) void refreshArtifacts();
+    };
+    setArtifactError("");
+    void refreshArtifacts();
+    document.addEventListener("visibilitychange", visible);
+    return () => {
+      // 切换筛选或离开看板后，旧集合的响应不再覆盖当前成果。
+      cancelled = true;
+      clearTimeout(timer);
+      document.removeEventListener("visibilitychange", visible);
+    };
+  }, [artifactThreadKey, view, artifactRevision]);
+  const artifactsByThread = useMemo(() => {
+    const grouped = new Map<string, DetectedArtifact[]>();
+    for (const artifact of discovery.artifacts) {
+      const artifacts = grouped.get(artifact.threadId) ?? [];
+      artifacts.push(artifact);
+      grouped.set(artifact.threadId, artifacts);
+    }
+    return grouped;
+  }, [discovery]);
+  const pendingArtifacts = useMemo(
+    () => new Set(discovery.pendingThreadIds ?? []),
+    [discovery],
   );
   const live = snapshot?.connection.state === "connected" && !fetchError;
   const loading = !snapshot && !fetchError;
-  const activeFilters = Object.values(filters).reduce(
-    (n, a) => n + a.length,
-    0,
-  );
+  const syncingThreads = snapshot?.syncingThreads === true && !fetchError;
+  // 首次同步暂无可展示对话时复用加载占位，已有卡片保持可见。
+  const loadingBoard = loading || (syncingThreads && !displayed.length);
+  const activeFilters = activeFilterCount(filters);
   const selectReadSource = (value: string | null) => {
     readSourceRef.current = value;
     setReadSource(value);
@@ -236,14 +442,114 @@ function Board() {
     }
   };
 
+  /** 打开独立启动入口，由用户按提示退出客户端后继续连接。 */
+  async function launchLive() {
+    setLaunching(true);
+    try {
+      const result = await launchLiveConnection();
+      setToast(result.message);
+    } catch (error) {
+      setToast(error instanceof Error ? error.message : "无法打开实时启动器");
+    } finally {
+      setLaunching(false);
+    }
+  }
+
   return (
     <div className="app-shell">
       <main className="main">
-        <section className="board-section" aria-label={t("对话看板")}>
+        <header className="workspace-nav">
+          <div
+            className="workspace-nav-tabs"
+            role="tablist"
+            aria-label={t("工作台视图")}
+            onKeyDown={(event) => {
+              if (
+                !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)
+              )
+                return;
+              event.preventDefault();
+              const views = ["board", "items", "review"] as const;
+              const index = views.indexOf(view);
+              const next =
+                event.key === "Home"
+                  ? 0
+                  : event.key === "End"
+                    ? 2
+                    : (index + (event.key === "ArrowRight" ? 1 : -1) + 3) % 3;
+              setView(views[next]);
+              document.getElementById(`workspace-tab-${views[next]}`)?.focus();
+            }}
+          >
+            {(
+              [
+                ["board", "对话看板"],
+                ["items", "工作事项"],
+                ["review", "工作回顾"],
+              ] as const
+            ).map(([id, label]) => (
+              <button
+                key={id}
+                id={`workspace-tab-${id}`}
+                role="tab"
+                aria-selected={view === id}
+                aria-controls={`workspace-panel-${id}`}
+                tabIndex={view === id ? 0 : -1}
+                onClick={() => setView(id)}
+              >
+                {t(label)}
+              </button>
+            ))}
+          </div>
+          <label className="language-picker">
+            <Languages size={14} aria-hidden="true" />
+            <select
+              aria-label="Language"
+              value={language}
+              onChange={(event) =>
+                setLanguage(event.target.value === "CN" ? "CN" : "EN")
+              }
+            >
+              <option value="EN" lang="en">
+                EN
+              </option>
+              <option value="CN" lang="zh-CN">
+                CN
+              </option>
+            </select>
+          </label>
+          <button
+            className={`connection-pill ${live ? "is-live" : "is-offline"}`}
+            onClick={() => setSettings(true)}
+            aria-label={t("连接与数据源")}
+            title={t("连接与数据源")}
+          >
+            {live ? <Wifi size={14} /> : <WifiOff size={14} />}
+            <span>
+              {live
+                ? t("已连接")
+                : snapshot?.connection.state === "connecting"
+                  ? t("连接中")
+                  : t("未连接")}
+            </span>
+            <span className="connection-dot" />
+          </button>
+        </header>
+        <section
+          className="board-section"
+          id="workspace-panel-board"
+          role="tabpanel"
+          aria-labelledby="workspace-tab-board"
+          hidden={view !== "board"}
+        >
           <div className="board-toolbar">
             <SegmentedControl<BoardScope>
               options={[
-                { value: "all", label: t("全部对话"), count: threads.length },
+                {
+                  value: "all",
+                  label: t("全部对话"),
+                  count: filtered.length,
+                },
                 {
                   value: "attention",
                   label: t("需要关注"),
@@ -262,7 +568,7 @@ function Board() {
                 <input
                   ref={search}
                   aria-label={t("搜索对话")}
-                  placeholder={t("搜索对话…")}
+                  placeholder={t("搜索标题、输入或事项…")}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -278,22 +584,6 @@ function Board() {
                 {t("筛选")}
                 {activeFilters ? ` ${activeFilters}` : ""}
               </Button>
-              <button
-                className={`connection-pill ${live ? "is-live" : ""}`}
-                onClick={() => setSettings(true)}
-                aria-label={t("连接与数据源")}
-                title={t("连接与数据源")}
-              >
-                {live ? <Wifi size={14} /> : <WifiOff size={14} />}
-                <span>
-                  {live
-                    ? t("已连接")
-                    : snapshot?.connection.state === "connecting"
-                      ? t("连接中")
-                      : t("未连接")}
-                </span>
-                <span className="connection-dot" />
-              </button>
               <Button
                 variant="secondary"
                 size="sm"
@@ -306,28 +596,21 @@ function Board() {
                 {t("刷新")}
               </Button>
             </div>
-            <label className="language-picker">
-              <span>Language</span>
-              <select
-                aria-label="Language"
-                value={language}
-                onChange={(event) =>
-                  setLanguage(event.target.value === "CN" ? "CN" : "EN")
-                }
-              >
-                <option value="EN" lang="en">
-                  EN
-                </option>
-                <option value="CN" lang="zh-CN">
-                  CN
-                </option>
-              </select>
-            </label>
           </div>
           {fetchError && (
             <div className="data-notice" role="alert">
               <Unplug size={14} /> {t(fetchError)}
               {t("。当前显示最后一次快照。")}
+            </div>
+          )}
+          {artifactError && (
+            <div className="data-notice" role="alert">
+              {t("读取成果失败")} · {t(artifactError)}
+            </div>
+          )}
+          {workspaceError && (
+            <div className="data-notice" role="alert">
+              {t(workspaceError)}
             </div>
           )}
           {snapshot && !snapshot.sources.metadata && (
@@ -373,18 +656,9 @@ function Board() {
                       label: project,
                     })),
                   },
-                  {
-                    id: "kind",
-                    label: t("对话类型"),
-                    options: [
-                      { id: "user", label: t("普通对话") },
-                      { id: "agent", label: t("子 Agent") },
-                      { id: "unknown", label: t("其他 / 未知") },
-                    ],
-                  },
                 ]}
                 value={filters}
-                onChange={setFilters}
+                onChange={(next) => setFilters({ ...DEFAULT_FILTERS, ...next })}
               />
               <Button
                 variant="ghost"
@@ -398,10 +672,21 @@ function Board() {
           )}
           <div className="board-meta">
             <span>
-              <span className={`tiny-dot ${live ? "green" : ""}`} />
-              {loading
-                ? t("正在读取本地对话")
-                : t("{count} 条对话", { count: displayed.length })}
+              {syncingThreads && displayed.length > 0 ? (
+                <ThinkingLoader
+                  phases={[t("正在同步最近的对话状态…")]}
+                  phase={0}
+                  size="sm"
+                  variant="plain"
+                />
+              ) : (
+                <>
+                  <span className={`tiny-dot ${live ? "green" : ""}`} />
+                  {loading
+                    ? t("正在读取本地对话")
+                    : t("{count} 条对话", { count: displayed.length })}
+                </>
+              )}
             </span>
             <div className="board-meta-actions">
               {snapshot && (
@@ -412,30 +697,60 @@ function Board() {
                   })}
                 </span>
               )}
-              {!displayed.length && threads.length > 0 && (
+              {!displayed.length && boardThreads.length > 0 && (
                 <button
                   className="sort-button"
                   onClick={() => {
                     setQuery("");
-                    setFilters({});
+                    setFilters(DEFAULT_FILTERS);
                     setScope("all");
                   }}
                 >
                   {t("重置筛选")}
                 </button>
               )}
-              <button
-                className="sort-button"
-                onClick={() => setSort(sort === "recent" ? "title" : "recent")}
-              >
-                <ArrowDownWideNarrow size={13} />
-                {sort === "recent" ? t("最近更新") : t("标题排序")}
-              </button>
+              <label className="board-select">
+                <ArrowDownWideNarrow size={13} aria-hidden="true" />
+                <select
+                  aria-label={t("排序方式")}
+                  value={sort}
+                  onChange={(e) =>
+                    setSort(e.target.value as BoardPreferences["sort"])
+                  }
+                >
+                  <option value="priority">{t("优先处理")}</option>
+                  <option value="recent">{t("最近发消息")}</option>
+                  <option value="title">{t("标题排序")}</option>
+                </select>
+              </label>
+              <label className="board-select">
+                <SquareKanban size={13} aria-hidden="true" />
+                <select
+                  aria-label={t("布局方式")}
+                  value={layout}
+                  onChange={(e) =>
+                    setLayout(e.target.value as BoardPreferences["layout"])
+                  }
+                >
+                  <option value="auto">{t("自动布局")}</option>
+                  <option value="board">{t("看板")}</option>
+                  <option value="list">{t("紧凑列表")}</option>
+                </select>
+              </label>
             </div>
           </div>
-          {loading ? (
+          {loadingBoard ? (
             <div className="loading-board">
-              <ThinkingLoader phases={[t("正在读取本地对话")]} phase={0} />
+              <ThinkingLoader
+                phases={[
+                  t(
+                    syncingThreads
+                      ? "正在同步最近的对话状态…"
+                      : "正在读取本地对话",
+                  ),
+                ]}
+                phase={0}
+              />
               <div className="skeleton-grid">
                 {Array.from({ length: 6 }, (_, i) => (
                   <div className="skeleton-card" key={i}>
@@ -446,9 +761,33 @@ function Board() {
                 ))}
               </div>
             </div>
+          ) : !displayed.length ? (
+            <div className="board-empty" role="status">
+              <SquareKanban size={26} strokeWidth={1.3} />
+              <p>
+                {t(
+                  scope === "attention"
+                    ? "当前没有需要关注的对话"
+                    : "没有匹配的对话",
+                )}
+              </p>
+              <small>{t("可调整搜索或筛选条件。")}</small>
+            </div>
+          ) : listLayout ? (
+            <ConversationList
+              threads={displayed}
+              onOpen={open}
+              artifactsByThread={artifactsByThread}
+              pendingArtifacts={pendingArtifacts}
+              onArtifactError={setToast}
+              workItems={workItems}
+              onAddItem={setAddingThread}
+              onOpenItem={openWorkItem}
+            />
           ) : (
             <div
               className="kanban"
+              aria-busy={syncingThreads}
               style={
                 { "--lane-count": visibleColumns.length } as React.CSSProperties
               }
@@ -463,11 +802,41 @@ function Board() {
                   onOpen={(thread) => void open(thread)}
                   unreadAvailable={snapshot?.sources.unread ?? false}
                   onConfigure={() => setSettings(true)}
+                  artifactsByThread={artifactsByThread}
+                  pendingArtifacts={pendingArtifacts}
+                  onArtifactError={setToast}
+
+                  workItems={workItems}
+                  onAddItem={setAddingThread}
+                  onOpenItem={openWorkItem}
                 />
               ))}
             </div>
           )}
         </section>
+        <div
+          id="workspace-panel-items"
+          role="tabpanel"
+          aria-labelledby="workspace-tab-items"
+          hidden={view !== "items"}
+        >
+          <WorkItems
+            active={view === "items"}
+            threads={threads}
+            artifactRevision={artifactRevision}
+            onChanged={updateWorkspace}
+            openItem={workItems.find((item) => item.id === openItemId) ?? null}
+            onItemOpened={() => setOpenItemId(null)}
+          />
+        </div>
+        <div
+          id="workspace-panel-review"
+          role="tabpanel"
+          aria-labelledby="workspace-tab-review"
+          hidden={view !== "review"}
+        >
+          <WorkReviewPanel active={view === "review"} />
+        </div>
       </main>
       {settings && (
         <Modal title={t("连接与数据源")} onClose={() => setSettings(false)}>
@@ -515,16 +884,29 @@ function Board() {
             {t(snapshot?.sources.unreadReason ?? "正在检查数据源")}
             {t("。未读记录属于客户端内部格式，兼容性可能随版本变化。")}
           </p>
+          <ArtifactRulesSettings
+            onSaved={() => setArtifactRevision((current) => current + 1)}
+          />
           <h3>{t("接入实时状态")}</h3>
+          <div className="workspace-live-action">
+            <Button
+              icon={<Radio size={14} />}
+              loading={launching}
+              onClick={() => void launchLive()}
+            >
+              {t("打开实时启动器")}
+            </Button>
+          </div>
           <p className="settings-note">
             {t(
-              "在本项目目录的独立终端运行以下命令，会自动以共享模式打开 Codex。若 Codex 已打开，按提示退出即可，命令会继续启动。保持终端运行。",
+              "点击按钮即可打开启动器，无需输入命令。若 Codex 已打开，请按提示用 ⌘Q 完全退出，启动器会自动继续。",
             )}
           </p>
+          <p className="settings-note">{t("也可在插件目录的独立终端运行：")}</p>
           <pre className="setup-command">npm run codex-kanban-plugin</pre>
           <p className="settings-note">
             {t(
-              "退出本次 Codex 后，命令会自动清理自己创建的后端。以后直接点击 Codex 图标即可普通启动，无需恢复命令。",
+              "关闭启动终端不会影响 Codex。退出 Codex 后，后端会自动停止；以后直接点击 Codex 图标即可普通启动。",
             )}
           </p>
           <p className="settings-note">
@@ -538,6 +920,14 @@ function Board() {
           </div>
         </Modal>
       )}
+      {addingThread && (
+        <ThreadWorkItemPicker
+          thread={addingThread}
+          items={workItems}
+          onChanged={updateWorkspace}
+          onClose={() => setAddingThread(null)}
+        />
+      )}
       {toast && (
         <div className="toast" role="status">
           {t(toast)}
@@ -547,20 +937,279 @@ function Board() {
   );
 }
 
+type CardActions = {
+  onOpen: (thread: Thread) => void;
+  artifactsByThread: Map<string, DetectedArtifact[]>;
+  pendingArtifacts: Set<string>;
+  onArtifactError: (message: string) => void;
+  workItems: WorkItem[];
+  onAddItem: (thread: Thread) => void;
+  onOpenItem: (id: string) => void;
+};
+
+/** 卡片在看板和紧凑列表中共用跳转、待处理信息和事项关联入口。 */
+function ThreadCard({
+  thread,
+  compact = false,
+  onOpen,
+  artifactsByThread,
+  pendingArtifacts,
+  onArtifactError,
+  workItems,
+  onAddItem,
+  onOpenItem,
+}: CardActions & { thread: Thread; compact?: boolean }) {
+  const { language, locale, t } = useI18n();
+  const state = columnFor(thread);
+  const metrics = (
+    <>
+      <span className="card-model-info">
+        <span className="model-tag" title={t("当前模型")}>
+          {thread.model ?? t("模型未知")}
+        </span>
+        <span className="effort-tag" title={t("思考等级")}>
+          {t("思考")} · {thread.reasoningEffort ?? t("未知")}
+        </span>
+        <span
+          className={`mode-tag ${thread.collaborationMode === "plan" ? "is-plan" : ""}`}
+          title={t("当前或最近一轮的协作模式")}
+        >
+          {thread.collaborationMode === "plan"
+            ? t("计划模式")
+            : thread.collaborationMode === "default"
+              ? t("默认模式")
+              : t("模式未知")}
+        </span>
+        <span
+          className={`goal-tag ${thread.goalStatus === "active" ? "is-active" : ""}`}
+        >
+          {thread.goalStatus
+            ? t(goalLabels[thread.goalStatus])
+            : t("目标状态未知")}
+        </span>
+      </span>
+      <span className="card-usage">
+        <span className="usage-scope">
+          {isCurrentTurn(thread)
+            ? t("本轮")
+            : thread.turnUsage?.status === "inProgress" || !thread.turnUsage
+              ? t("最近一轮")
+              : t("上轮")}
+        </span>
+        <span
+          title={
+            thread.turnUsage?.tokens != null
+              ? t("本轮累计 {count} tokens，包含输入、缓存输入和输出", {
+                  count: thread.turnUsage.tokens.toLocaleString(locale),
+                })
+              : t("本轮累计 token 数据不可用")
+          }
+        >
+          <Cpu size={11} />
+          {formatTokens(thread.turnUsage?.tokens ?? null, language)}
+        </span>
+        <span
+          title={t(
+            "这一轮从开始到结束的累计耗时；运行时持续更新，断线后暂停计时",
+          )}
+        >
+          <Timer size={11} />
+          {formatDuration(elapsedMs(thread), language)}
+        </span>
+      </span>
+    </>
+  );
+  return (
+    <article className={`thread-card ${compact ? "is-compact" : ""}`}>
+      <button
+        className="thread-card-open"
+        onClick={() => onOpen(thread)}
+        title={t("打开对话：{title}", { title: thread.title })}
+        aria-label={t("打开对话：{title}", { title: thread.title })}
+        aria-describedby={`thread-input-${thread.id}`}
+      >
+        <span className="card-top">
+          <span className="card-project">
+            <Folder size={12} />
+            {thread.project}
+          </span>
+          {thread.unread === true && (
+            <span
+              className="unread-marker"
+              title={t("未读")}
+              aria-label={t("未读")}
+            />
+          )}
+          {thread.unread === null && (
+            <span className="read-unknown" title={t("阅读状态未知")}>
+              ?
+            </span>
+          )}
+        </span>
+        <h3>{thread.title}</h3>
+        {state === "waiting" && (
+          <span className="card-attention">
+            <span className="card-attention-label">
+              {t(waitingLabel(thread))}
+            </span>
+            {thread.waitingQuestion && (
+              <span className="card-attention-text">
+                {thread.waitingQuestion}
+              </span>
+            )}
+            {thread.waitingSince && (
+              <span
+                className="card-wait-duration"
+                title={t(
+                  "从本次连接首次观察到等待开始计时，不代表问题实际发出时间。",
+                )}
+              >
+                {t("已观察到等待 {duration}", {
+                  duration: formatDuration(
+                    Math.max(0, Date.now() - Date.parse(thread.waitingSince)),
+                    language,
+                  ),
+                })}
+              </span>
+            )}
+          </span>
+        )}
+        {state === "error" && (
+          <span className="card-attention is-error">
+            <span className="card-attention-label">{t("执行异常")}</span>
+            <span className="card-attention-text">
+              {thread.error?.message || t("打开原对话查看异常并处理。")}
+            </span>
+          </span>
+        )}
+        <span className="card-input">
+          <span className="card-input-label">
+            {isCurrentTurn(thread)
+              ? t("本轮输入")
+              : thread.turnUsage?.status === "inProgress" || !thread.turnUsage
+                ? t("最近一轮输入")
+                : t("上轮输入")}
+          </span>
+          <span className="card-input-text" id={`thread-input-${thread.id}`}>
+            {thread.turnUsage?.userInput === ""
+              ? t("未输入文字")
+              : (thread.turnUsage?.userInput ?? t("未获取到用户输入"))}
+          </span>
+        </span>
+        {!compact && metrics}
+        <span className="card-bottom">
+          <span
+            className={`card-state ${columns.find((c) => c.id === columnFor(thread))?.color}`}
+          >
+            {columnFor(thread) === "running" ? (
+              <LoaderCircle size={11} className="spin" />
+            ) : (
+              <span className="card-state-dot" />
+            )}
+            {columnFor(thread) === "unknown"
+              ? thread.runtime?.type === "notLoaded" && thread.fresh
+                ? t("对话尚未加载")
+                : t("实时状态未知")
+              : t(labelFor(thread))}
+          </span>
+          <span className="card-time" title={t("最近一次用户发消息的时间")}>
+            <Clock3 size={11} />
+            {thread.lastUserMessageAt
+              ? relativeTime(thread.lastUserMessageAt, language)
+              : t("发消息时间未知")}
+          </span>
+        </span>
+      </button>
+      <ThreadMonitoring thread={thread} onError={onArtifactError} />
+      {compact && (
+        <details className="card-run-details">
+          <summary>{t("运行详情")}</summary>
+          {metrics}
+        </details>
+      )}
+      <ThreadWorkItems
+        thread={thread}
+        items={workItems}
+        onAdd={() => onAddItem(thread)}
+        onOpenItem={onOpenItem}
+      />
+      {(artifactsByThread.has(thread.id) ||
+        pendingArtifacts.has(thread.id)) && (
+        <div
+          className="card-artifacts"
+          aria-busy={pendingArtifacts.has(thread.id)}
+        >
+          <span className="card-artifacts-label">{t("成果")}</span>
+          <DetectedArtifacts
+            artifacts={artifactsByThread.get(thread.id) ?? []}
+            threads={[thread]}
+            showSource={false}
+            onError={onArtifactError}
+          />
+          {pendingArtifacts.has(thread.id) && (
+            <ThinkingLoader
+              phases={[t("正在识别成果…")]}
+              phase={0}
+              size="sm"
+              variant="plain"
+            />
+          )}
+        </div>
+      )}
+    </article>
+  );
+}
+
+/** 列表分页限制首屏渲染数量，窄窗口内保持单向滚动。 */
+function ConversationList({
+  threads,
+  ...cardActions
+}: CardActions & { threads: Thread[] }) {
+  const { t } = useI18n();
+  const [limit, setLimit] = useState(40);
+  useEffect(
+    () => setLimit(40),
+    [
+      threads
+        .map((thread) => thread.id)
+        .sort()
+        .join("|"),
+    ],
+  );
+  return (
+    <div className="conversation-list">
+      {threads.slice(0, limit).map((thread) => (
+        <ThreadCard key={thread.id} thread={thread} compact {...cardActions} />
+      ))}
+      {threads.length > limit && (
+        <button
+          className="load-more"
+          onClick={() => setLimit((value) => value + 40)}
+        >
+          {t("再显示 {count} 条", {
+            count: Math.min(40, threads.length - limit),
+          })}
+          <ChevronRight size={12} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+/** 宽屏看板继续按状态分列，卡片操作由两种布局共用。 */
 function Lane({
   column,
   threads,
-  onOpen,
   unreadAvailable,
   onConfigure,
-}: {
+  ...cardActions
+}: CardActions & {
   column: (typeof columns)[number];
   threads: Thread[];
-  onOpen: (thread: Thread) => void;
   unreadAvailable: boolean;
   onConfigure: () => void;
 }) {
-  const { language, locale, t } = useI18n();
+  const { t } = useI18n();
   const [limit, setLimit] = useState(20);
   const unreadUnknown = column.id === "unread" && !unreadAvailable;
   return (
@@ -576,131 +1225,7 @@ function Lane({
       </div>
       <div className="lane-cards">
         {threads.slice(0, limit).map((thread) => (
-          <button
-            className="thread-card"
-            key={thread.id}
-            onClick={() => onOpen(thread)}
-            title={t("打开对话：{title}", { title: thread.title })}
-            aria-label={t("打开对话：{title}", { title: thread.title })}
-            aria-describedby={`thread-input-${thread.id}`}
-          >
-            <span className="card-top">
-              <span className="card-project">
-                <Folder size={12} />
-                {thread.project}
-              </span>
-              {thread.unread === true && (
-                <span
-                  className="unread-marker"
-                  title={t("未读")}
-                  aria-label={t("未读")}
-                />
-              )}
-              {thread.unread === null && (
-                <span className="read-unknown" title={t("阅读状态未知")}>
-                  ?
-                </span>
-              )}
-            </span>
-            <h3>{thread.title}</h3>
-            <span className="card-input">
-              <span className="card-input-label">
-                {isCurrentTurn(thread)
-                  ? t("本轮输入")
-                  : thread.turnUsage?.status === "inProgress" ||
-                      !thread.turnUsage
-                    ? t("最近一轮输入")
-                    : t("上轮输入")}
-              </span>
-              <span
-                className="card-input-text"
-                id={`thread-input-${thread.id}`}
-              >
-                {thread.turnUsage?.userInput ?? t("未获取到用户输入")}
-              </span>
-            </span>
-            <span className="card-model-info">
-              <span className="model-tag" title={t("当前模型")}>
-                {thread.model ?? t("模型未知")}
-              </span>
-              <span className="effort-tag" title={t("思考等级")}>
-                {t("思考")} · {thread.reasoningEffort ?? t("未知")}
-              </span>
-              <span
-                className={`mode-tag ${thread.collaborationMode === "plan" ? "is-plan" : ""}`}
-                title={t("当前或最近一轮的协作模式")}
-              >
-                {thread.collaborationMode === "plan"
-                  ? t("计划模式")
-                  : thread.collaborationMode === "default"
-                    ? t("默认模式")
-                    : t("模式未知")}
-              </span>
-              <span
-                className={`goal-tag ${thread.goalStatus === "active" ? "is-active" : ""}`}
-              >
-                {thread.goalStatus
-                  ? t(goalLabels[thread.goalStatus])
-                  : t("目标状态未知")}
-              </span>
-            </span>
-            <span className="card-usage">
-              <span className="usage-scope">
-                {isCurrentTurn(thread)
-                  ? t("本轮")
-                  : thread.turnUsage?.status === "inProgress" ||
-                      !thread.turnUsage
-                    ? t("最近一轮")
-                    : t("上轮")}
-              </span>
-              <span
-                title={
-                  thread.turnUsage?.tokens != null
-                    ? t("本轮累计 {count} tokens，包含输入、缓存输入和输出", {
-                        count: thread.turnUsage.tokens.toLocaleString(locale),
-                      })
-                    : t("本轮累计 token 数据不可用")
-                }
-              >
-                <Cpu size={11} />
-                {formatTokens(thread.turnUsage?.tokens ?? null, language)}
-              </span>
-              <span
-                title={t(
-                  "这一轮从开始到结束的累计耗时；运行时持续更新，断线后暂停计时",
-                )}
-              >
-                <Timer size={11} />
-                {formatDuration(elapsedMs(thread), language)}
-              </span>
-            </span>
-            <span className="card-bottom">
-              <span
-                className={`card-state ${columns.find((c) => c.id === columnFor(thread))?.color}`}
-              >
-                {columnFor(thread) === "running" ? (
-                  <LoaderCircle size={11} className="spin" />
-                ) : (
-                  <span className="card-state-dot" />
-                )}
-                {column.id === "unread"
-                  ? t(labelFor(thread))
-                  : columnFor(thread) === "waiting"
-                    ? t(waitingLabel(thread))
-                    : thread.kind === "agent"
-                      ? t("子 Agent")
-                      : columnFor(thread) === "unknown"
-                        ? thread.runtime?.type === "notLoaded" && thread.fresh
-                          ? t("对话尚未加载")
-                          : t("实时状态未知")
-                        : t("本地对话")}
-              </span>
-              <span className="card-time">
-                <Clock3 size={11} />
-                {relativeTime(thread.updatedAt, language)}
-              </span>
-            </span>
-          </button>
+          <ThreadCard key={thread.id} thread={thread} {...cardActions} />
         ))}
         {!threads.length && (
           <div className="lane-empty">
@@ -809,17 +1334,17 @@ function ReadSourcePicker({
         value={value ?? ""}
         onChange={(event) => onChange(event.target.value || null)}
       >
-        <option value="">{t("自动（仅有唯一记录时启用）")}</option>
+        <option value="">{t("自动（优先普通启动记录）")}</option>
         {sources?.unreadOptions?.map((option) => (
           <option key={option.key} value={option.key}>
-            {option.label.replace(/^本地记录/, t("本地记录"))} ·{" "}
+            {t(option.label).replace(/^本地记录/, t("本地记录"))} ·{" "}
             {t("{count} 条未读", { count: option.count })}
           </option>
         ))}
       </select>
       <span>
         {t(
-          "多份本地记录时，请选择与你当前客户端对应的记录；无法确认时保持自动，未读将显示为未知。",
+          "自动优先复用普通启动记录，未读数只统计看板中的普通对话。来源无法自动确定时，请手动选择。",
         )}
       </span>
     </label>

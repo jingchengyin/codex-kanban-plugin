@@ -2,6 +2,7 @@ import { mkdir, cp, readFile, readdir, writeFile, rm } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { createHash } from "node:crypto";
 import { build } from "tsup";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -47,6 +48,14 @@ const mcp = JSON.parse(await readFile(resolve(root, ".mcp.json"), "utf8"));
 // Keep the MCP identity stable for existing board views and preferences.
 mcp.mcpServers["codex-taskboard"].args = ["./scripts/start-mcp.sh"];
 mcp.mcpServers["codex-taskboard"].cwd = ".";
+// 同版本本地重装也要刷新 MCP 进程，避免新页面继续调用旧服务。
+mcp.mcpServers["codex-taskboard"].env = {
+  ...mcp.mcpServers["codex-taskboard"].env,
+  TASKBOARD_BUILD_ID: createHash("sha256")
+    .update(await readFile(resolve(plugin, "runtime/server/index.mjs")))
+    .update(await readFile(resolve(plugin, "runtime/ui/index.html")))
+    .digest("hex"),
+};
 await writeFile(
   resolve(plugin, ".mcp.json"),
   JSON.stringify(mcp, null, 2) + "\n",
@@ -71,7 +80,14 @@ await writeFile(
   ) + "\n",
 );
 await mkdir(resolve(plugin, "scripts"), { recursive: true });
-for (const path of ["start-live.mjs", "kanban-launcher.mjs", "start-mcp.sh"]) {
+for (const path of [
+  "Codex Kanban.command",
+  "start-live.mjs",
+  "kanban-launcher.mjs",
+  "start-mcp.sh",
+  "start-desktop-cli.sh",
+  "desktop-cli.mjs",
+]) {
   await cp(resolve(root, "scripts", path), resolve(plugin, "scripts", path));
 }
 

@@ -143,9 +143,18 @@ for (const desktopPath of [false, true]) {
         assert.ok(server, "The installed plugin must register its MCP server.");
         assert.equal(server.toolsError, null);
         assert.deepEqual(Object.keys(server.tools).sort(), [
+          "taskboard_artifact_rules",
+          "taskboard_artifact_rules_save",
+          "taskboard_live_launch",
           "taskboard_open",
           "taskboard_panel",
           "taskboard_snapshot",
+          "taskboard_thread_artifacts",
+          "taskboard_work_item_add_thread",
+          "taskboard_work_item_delete",
+          "taskboard_work_item_save",
+          "taskboard_work_review",
+          "taskboard_workspace",
         ]);
         assert.ok(
           server.resources.some(

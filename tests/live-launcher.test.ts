@@ -78,13 +78,7 @@ async function fixture(port: number, mode = "closed", command = cli) {
     },
     async dispose() {
       if (!exited) {
-        const pid = output.match(/专用 PID (\d+)/)?.[1];
-        if (pid) {
-          try {
-            process.kill(Number(pid), "SIGTERM");
-          } catch {}
-        }
-        child.kill("SIGTERM");
+        child.stdin.write("quit\ninterrupt\n");
         await finished;
       }
       await rm(home, { recursive: true, force: true });
@@ -118,19 +112,29 @@ test(
       await run.until("Codex 共享启动成功");
       const endpoint = `ws://127.0.0.1:${port}`;
       const args = JSON.parse(run.output().match(/TEST_LAUNCH_ARGS:(.+)/)![1]);
-      assert.ok(args.includes(`CODEX_APP_SERVER_WS_URL=${endpoint}`));
+      assert.ok(args.includes("CODEX_APP_SERVER_WS_URL"));
+      assert.ok(args.includes("CODEX_APP_SERVER_FORCE_CLI"));
+      assert.equal(args.includes("CODEX_APP_SERVER_FORCE_CLI=1"), false);
+      assert.ok(
+        args.some(
+          (arg: string) =>
+            arg.startsWith("CODEX_CLI_PATH=") &&
+            arg.endsWith("/start-desktop-cli.sh"),
+        ),
+      );
+      assert.ok(args.includes("CODEX_APP_TOOLS_PIPE_PATH"));
       assert.ok(args.includes(`TASKBOARD_WS_URL=${endpoint}`));
       assert.equal(
         args.includes(`CODEX_APP_SERVER_WS_URL=${endpoint}/`),
         false,
       );
       assert.equal(args.includes("-n"), false);
-      assert.match(run.output(), /后端日志：.+backend\.log/);
+      assert.match(run.output(), /后端由 Codex 管理/);
       assert.equal(run.output().includes("恢复普通启动："), false);
       await websocket(port);
       run.child.stdin.write("quit\n");
       assert.equal(await run.finished, 0, run.output());
-      assert.match(run.output(), /本次共享后端已停止/);
+      assert.match(run.output(), /TEST_DESKTOP_BACKEND_STOPPED/);
       assert.match(run.output(), /TEST_LAUNCH_COUNT:1/);
       await assert.rejects(websocket(port));
     } finally {
@@ -140,7 +144,7 @@ test(
 );
 
 test(
-  "existing shared backend is reused and never stopped by a second launcher; repeated launch is idempotent",
+  "an unowned backend is rejected and repeated desktop launch is idempotent",
   { timeout: 25000 },
   async (t) => {
     if (!(await available(t))) return;
@@ -151,11 +155,9 @@ test(
     try {
       await owner.until("Codex 共享启动成功");
       reuse = await fixture(port);
-      await reuse.until("Codex 共享启动成功");
-      assert.match(reuse.output(), /复用共享后端/);
-      reuse.child.stdin.write("quit\n");
-      assert.equal(await reuse.finished, 0, reuse.output());
-      assert.equal(reuse.output().includes("本次共享后端已停止"), false);
+      assert.equal(await reuse.finished, 1, reuse.output());
+      assert.match(reuse.output(), /已有独立后端/);
+      assert.equal(reuse.output().includes("TEST_LAUNCH_ARGS:"), false);
       await websocket(port);
       repeated = await fixture(port, "shared");
       assert.equal(await repeated.finished, 0, repeated.output());
@@ -164,7 +166,7 @@ test(
       await websocket(port);
       owner.child.stdin.write("quit\n");
       assert.equal(await owner.finished, 0, owner.output());
-      assert.match(owner.output(), /本次共享后端已停止/);
+      assert.match(owner.output(), /TEST_DESKTOP_BACKEND_STOPPED/);
     } finally {
       await repeated?.dispose();
       await reuse?.dispose();
@@ -200,36 +202,31 @@ test(
     if (!(await available(t))) return;
     const port = await reservePort();
     const run = await fixture(port);
-    let backendPid: number | undefined;
     try {
       await run.until("Codex 共享启动成功");
-      backendPid = Number(run.output().match(/专用 PID (\d+)/)![1]);
       run.child.stdin.write("interrupt\n");
-      assert.equal(await run.finished, 0, run.output());
-      assert.match(run.output(), /已保留 PID/);
+      await run.until("TEST_LAUNCHER_RETURNED");
       await websocket(port);
+      run.child.stdin.write("quit\n");
+      assert.equal(await run.finished, 0, run.output());
+      await assert.rejects(websocket(port));
     } finally {
-      if (backendPid) {
-        try {
-          process.kill(backendPid, "SIGTERM");
-        } catch {}
-      }
       await run.dispose();
     }
   },
 );
 
 test(
-  "startup failures include exit reason and log path before requesting a desktop launch",
+  "desktop backend startup failure is reported and cleaned up",
   { timeout: 15000 },
   async (t) => {
     if (!(await available(t))) return;
-    const run = await fixture(await reservePort(), "closed", "/usr/bin/false");
+    const port = await reservePort();
+    const run = await fixture(port, "closed", "/usr/bin/false");
     try {
       assert.equal(await run.finished, 1);
-      assert.match(run.output(), /共享后端没有启动成功（退出码 1）/);
-      assert.match(run.output(), /后端日志：.+backend\.log/);
-      assert.equal(run.output().includes("TEST_LAUNCH_ARGS:"), false);
+      assert.match(run.output(), /Codex backend exited with code 1/);
+      await assert.rejects(websocket(port));
     } finally {
       await run.dispose();
     }
