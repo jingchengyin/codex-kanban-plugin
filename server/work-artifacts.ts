@@ -50,7 +50,7 @@ type ArtifactCache = {
   state: ArtifactState;
 };
 // 解析器逻辑变化时递增版本；用户规则另由 rulesKey 校验。
-const artifactCacheVersion = 1;
+const artifactCacheVersion = 2;
 type ThreadLog = { cwd: unknown; rollout_path: unknown };
 /** 文件名索引按 Codex 目录复用，历史分段归属仅在请求对应对话时核对。 */
 type SegmentIndex = {
@@ -148,10 +148,26 @@ function nativePlans(
   return plans;
 }
 
+/** 裸地址在未配对的右括号处结束，URL 内部成对的括号保留。 */
+function bareUrlTarget(value: string): string {
+  let depth = 0;
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] === "(") depth++;
+    else if (value[index] === ")") {
+      if (depth === 0) {
+        value = value.slice(0, index);
+        break;
+      }
+      depth--;
+    }
+  }
+  return value.replace(/[\],.;!?，。；：！？、]+$/u, "");
+}
+
 /** 只识别合并请求的固定路径，不访问远端，也不推断合并状态。 */
 function mergeRequest(value: string): { url: string; label: string } | null {
   try {
-    const url = new URL(value.replace(/[)\],.;!?，。；：！？、]+$/u, ""));
+    const url = new URL(value);
     if (
       !["https:", "http:"].includes(url.protocol) ||
       url.username ||
@@ -181,7 +197,7 @@ function mergeRequest(value: string): { url: string; label: string } | null {
 function configuredLink(value: string, prefixes: URL[]): string | null {
   if (!prefixes.length) return null;
   try {
-    const url = new URL(value.replace(/[)\],.;!?，。；：！？、]+$/u, ""));
+    const url = new URL(value);
     if (
       !["https:", "http:"].includes(url.protocol) ||
       url.username ||
@@ -289,13 +305,19 @@ function extract(
         label: label || basename(path),
       });
   };
-  for (const match of body.matchAll(
+  // Markdown 地址及标签已处理，不再把链接后的正文当作裸地址重复扫描。
+  const bare = body.replace(
     /(?<!!)\[([^\]\n]+)\]\(\s*(?:<([^>\n]+)>|([^\n)]+))\s*\)/g,
-  )) {
-    const target = (match[2] ?? match[3]).replace(/\s+["'][^"']*["']\s*$/, "");
-    add(target, match[1].replace(/[*_`]/g, "").trim().slice(0, 200));
-  }
-  for (const match of body.matchAll(/https?:\/\/[^\s<>"'`]+/g)) add(match[0]);
+    (_match, label: string, angle: string | undefined, plain: string) => {
+      const target = (angle ?? plain).replace(/\s+["'][^"']*["']\s*$/, "");
+      add(target, label.replace(/[*_`]/g, "").trim().slice(0, 200));
+      return " ";
+    },
+  );
+  for (const match of bare.matchAll(
+    /https?:\/\/[^\s<>"'`，。；：！？、（）【】]+/g,
+  ))
+    add(bareUrlTarget(match[0]));
   for (const match of body.matchAll(/`([^`\n]+)`/g)) add(match[1]);
   return [...artifacts.values(), ...nativePlans(text, threadId, detectedAt)];
 }

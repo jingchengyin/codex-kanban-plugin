@@ -3,8 +3,10 @@ import { createPortal } from "react-dom";
 import { Check, FolderPlus, Plus, X } from "lucide-react";
 import type { Thread } from "../shared/types";
 import type { WorkItem, WorkItemSaveResult } from "../shared/work-items";
+import { randomWorkItemIcon } from "../shared/work-item-icons";
 import { addThreadToWorkItem, saveWorkItem } from "./client";
 import { useI18n } from "./i18n";
+import { WorkItemIcon, WorkItemIconPicker } from "./work-item-icon";
 import { Button } from "./vendor/affectui/button";
 import "./thread-work-items.css";
 
@@ -35,19 +37,21 @@ export function ThreadWorkItems({ thread, items, onAdd, onOpenItem }: Props) {
             aria-label={t("打开事项：{title}", { title: item.title })}
             onClick={() => onOpenItem(item.id)}
           >
-            {item.title}
+            <WorkItemIcon icon={item.icon} itemId={item.id} size={12} />
+            <span>{item.title}</span>
           </button>
         ))}
-        <Button
-          variant="ghost"
-          size="sm"
-          icon={<FolderPlus size={13} />}
-          aria-label={t("将对话加入事项：{title}", { title: thread.title })}
-          onClick={onAdd}
-        >
-          {t("加入事项")}
-        </Button>
       </div>
+      <Button
+        className="thread-work-item-add"
+        variant="ghost"
+        size="sm"
+        icon={<FolderPlus size={13} />}
+        aria-label={t("将对话加入事项：{title}", { title: thread.title })}
+        onClick={onAdd}
+      >
+        {t("加入事项")}
+      </Button>
     </div>
   );
 }
@@ -69,6 +73,7 @@ export function ThreadWorkItemPicker({
   const dialog = useRef<HTMLDialogElement>(null);
   const [query, setQuery] = useState("");
   const [title, setTitle] = useState(thread.title.slice(0, 200));
+  const [icon, setIcon] = useState(randomWorkItemIcon);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -92,6 +97,7 @@ export function ThreadWorkItemPicker({
         ? await addThreadToWorkItem(id, thread.id)
         : await saveWorkItem({
             title: title.trim(),
+            icon,
             description: "",
             status: "planned",
             threadIds: [thread.id],
@@ -150,7 +156,10 @@ export function ThreadWorkItemPicker({
               disabled={linked || busy !== null}
               onClick={() => void save(item.id)}
             >
-              <span>{item.title}</span>
+              <span>
+                <WorkItemIcon icon={item.icon} itemId={item.id} />
+                <span>{item.title}</span>
+              </span>
               <small>
                 {linked ? (
                   <>
@@ -183,6 +192,11 @@ export function ThreadWorkItemPicker({
           void save();
         }}
       >
+        <WorkItemIconPicker
+          value={icon}
+          onChange={setIcon}
+          disabled={busy !== null}
+        />
         <label className="thread-work-item-field">
           {t("新事项名称")}
           <input

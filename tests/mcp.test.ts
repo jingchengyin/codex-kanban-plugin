@@ -280,7 +280,7 @@ for (const packaged of [false, true]) {
           payload: {
             type: "task_complete",
             turn_id: "artifact-turn",
-            last_agent_message: `已创建 [MR](${mergeRequest}) 和 [设计方案](${planPath})、[消费优化文档](${larkDocument})。\n<proposed_plan>\n${nativePlan}</proposed_plan>`,
+            last_agent_message: `已创建 [MR](${mergeRequest}) 和 [设计方案](${planPath})、[消费优化文档](${larkDocument})，补齐优化前后的完整链路，明确区分**小批次成功**与失败。\n<proposed_plan>\n${nativePlan}</proposed_plan>`,
           },
         }) + "\n",
       );

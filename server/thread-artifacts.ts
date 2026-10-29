@@ -11,7 +11,7 @@ import { artifactRulesKey } from "../shared/artifact-rules.js";
 import { ArtifactRulesStore } from "./artifact-rules.js";
 
 type ThreadResult = {
-  schemaVersion: 1;
+  schemaVersion: 2;
   rulesKey?: string;
   threadId: string;
   artifacts: DetectedArtifact[];
@@ -88,7 +88,7 @@ export class ThreadArtifactIndex {
         try {
           const data = JSON.parse(await readFile(this.path(threadId), "utf8"));
           if (
-            data.schemaVersion !== 1 ||
+            data.schemaVersion !== 2 ||
             (data.rulesKey ?? "[]") !== rulesKey ||
             data.threadId !== threadId ||
             typeof data.unavailable !== "boolean" ||
@@ -201,7 +201,7 @@ export class ThreadArtifactIndex {
       await Promise.all(
         ids.map(async (threadId) => {
           const row: ThreadResult = {
-            schemaVersion: 1,
+            schemaVersion: 2,
             rulesKey,
             threadId,
             artifacts: found.artifacts.filter(

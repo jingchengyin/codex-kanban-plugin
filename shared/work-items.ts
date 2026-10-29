@@ -1,9 +1,13 @@
+import type { WorkItemIconName } from "./work-item-icons";
+
 /** 工作事项独立记录交付进度，不根据对话运行状态推断是否完成。 */
 export type WorkItemStatus = "planned" | "active" | "review" | "done";
 
 export type WorkItem = {
   id: string;
   title: string;
+  /** 兼容未保存图标的旧记录，读取时按事项 ID 补齐。 */
+  icon?: WorkItemIconName;
   description: string;
   status: WorkItemStatus;
   threadIds: string[];

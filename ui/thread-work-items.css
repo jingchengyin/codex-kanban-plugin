@@ -1,4 +1,7 @@
 .thread-work-items {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   margin-top: 12px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
@@ -8,8 +11,18 @@
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.thread-work-item-add {
+  flex-shrink: 0;
+  margin-left: auto;
+  min-height: 28px;
 }
 .thread-work-item-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
   max-width: 100%;
   min-height: 28px;
   padding: 5px 8px;
@@ -17,6 +30,10 @@
   background: var(--soft);
   color: var(--ink);
   font-size: 11px;
+  transition: color 160ms;
+}
+.thread-work-item-tag > span {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -80,6 +97,9 @@
   font-size: 13px;
 }
 .thread-work-item-option > span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   min-width: 0;
   overflow-wrap: anywhere;
 }

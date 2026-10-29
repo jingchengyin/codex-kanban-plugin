@@ -385,6 +385,7 @@ input {
   display: block;
   flex-shrink: 0;
   width: 100%;
+  min-width: 0;
   text-align: left;
   background: var(--surface);
   border: 1px solid var(--line);

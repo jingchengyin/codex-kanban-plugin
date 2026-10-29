@@ -187,6 +187,17 @@ textarea.workspace-input {
   font-weight: 600;
   overflow-wrap: anywhere;
 }
+.work-item-title {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.work-item-title > .work-item-icon {
+  margin-top: 2px;
+}
+.work-item-title > span {
+  min-width: 0;
+}
 .work-status {
   flex-shrink: 0;
   padding: 4px 7px;
@@ -530,6 +541,14 @@ p.workspace-hint {
 }
 .review-record-main > button:hover {
   color: var(--blue);
+}
+.review-record-main > button > span {
+  min-width: 0;
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  white-space: pre-wrap;
 }
 .review-record-main > p {
   margin: 8px 0 10px;

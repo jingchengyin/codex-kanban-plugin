@@ -214,6 +214,88 @@ test("configured prefixes recognize final document links with labels and path bo
     assert.deepEqual(result.unavailableThreadIds, []);
   }));
 
+test("Markdown document links followed by Chinese prose produce one labeled artifact", () =>
+  fixture(async (home, path) => {
+    const prefix = "https://bytedance.sg.larkoffice.com/docx";
+    const document = `${prefix}/VTWBdRKXso20opxNAC2liEuDgpf`;
+    await writeFile(
+      path,
+      final(
+        `[消费优化方案](${document})，补齐优化前后的完整链路，明确区分**小批次成功**与失败。\n` +
+          `[消费优化方案](${document})，方案中已有按序分批提交。`,
+      ),
+    );
+    const result = await new WorkArtifactReader().read(home, [first], {
+      urlPrefixes: [prefix],
+    });
+    assert.deepEqual(
+      result.artifacts.map((artifact) => [
+        artifact.kind === "link" && artifact.url,
+        artifact.label,
+      ]),
+      [[document, "消费优化方案"]],
+    );
+  }));
+
+test("bare document URLs stop at prose and unmatched parentheses, including the reported encoded suffix", () =>
+  fixture(async (home, path) => {
+    const prefix = "https://bytedance.sg.larkoffice.com/docx";
+    const document = `${prefix}/VTWBdRKXso20opxNAC2liEuDgpf`;
+    const suffix = encodeURI(
+      "，补齐优化前后的完整链路，明确区分**小批次成功**与",
+    );
+    await writeFile(
+      path,
+      final(
+        [
+          `${document}，补齐优化前后的完整链路。`,
+          `（${document}）补充说明`,
+          `(${document})，说明`,
+          `${document})${suffix}`,
+        ].join("\n"),
+      ),
+    );
+    const result = await new WorkArtifactReader().read(home, [first], {
+      urlPrefixes: [prefix],
+    });
+    assert.deepEqual(
+      result.artifacts.map((artifact) => [
+        artifact.kind === "link" && artifact.url,
+        artifact.label,
+      ]),
+      [[document, document]],
+    );
+  }));
+
+test("document URL boundaries preserve explicit Chinese targets, encoded queries, and balanced parentheses", () =>
+  fixture(async (home, path) => {
+    const prefix = "https://example.com/docs";
+    const chinese = new URL(`${prefix}/方案，第一版?说明=成功，失败`).href;
+    const encoded = `${prefix}/report?title=%E6%96%B9%E6%A1%88%EF%BC%8C&from=board#section`;
+    const balanced = `${prefix}/report(v2)`;
+    const explicit = `${prefix}/report?filter=)`;
+    await writeFile(
+      path,
+      final(
+        `[中文方案](${prefix}/方案，第一版?说明=成功，失败)\n` +
+          `${encoded}。\n(${balanced})。\n[筛选结果](<${explicit}>)`,
+      ),
+    );
+    const result = await new WorkArtifactReader().read(home, [first], {
+      urlPrefixes: [prefix],
+    });
+    assert.deepEqual(
+      result.artifacts
+        .flatMap((artifact) => (artifact.kind === "link" ? [artifact.url] : []))
+        .sort(),
+      [chinese, encoded, balanced, explicit].sort(),
+    );
+    assert.equal(
+      result.artifacts.find((artifact) => artifact.label === "中文方案")?.kind,
+      "link",
+    );
+  }));
+
 test("prefix additions and removals rebuild unchanged memory and disk caches and stable rules keep incremental hits", (context) =>
   fixture(async (home, path) => {
     const prefix = "https://bytedance.sg.larkoffice.com/docx";
@@ -952,7 +1034,7 @@ test("disk caches survive reader restarts, omit unrelated bodies, and resume fro
     assert.equal(files.length, 1);
     assert.match(files[0], /^[a-f0-9]{64}\.json$/);
     const saved = await readFile(join(directory, files[0]), "utf8");
-    assert.equal(JSON.parse(saved).schemaVersion, 1);
+    assert.equal(JSON.parse(saved).schemaVersion, 2);
     assert.equal(saved.includes("PRIVATE_"), false);
     assert.equal(saved.includes("NATIVE_PLAN_BODY"), true);
 
@@ -1062,7 +1144,7 @@ test("disk caches rebuild after source rewrites and invalid persisted data", () 
       assert.deepEqual(rebuilt, expected);
       assert.equal(
         JSON.parse(await readFile(cachePath, "utf8")).schemaVersion,
-        1,
+        2,
       );
     }
   }));

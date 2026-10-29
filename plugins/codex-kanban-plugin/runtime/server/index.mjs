@@ -52176,9 +52176,42 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
 import { dirname, join as join2 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
+
+// shared/work-item-icons.ts
+var workItemIcons = [
+  "rocket",
+  "target",
+  "lightbulb",
+  "code",
+  "bug",
+  "wrench",
+  "layers",
+  "flask",
+  "book",
+  "chart",
+  "shield",
+  "database",
+  "palette",
+  "compass",
+  "zap",
+  "flag"
+];
+function randomWorkItemIcon() {
+  return workItemIcons[Math.floor(Math.random() * workItemIcons.length)];
+}
+function resolveWorkItemIcon(item) {
+  if (item.icon) return item.icon;
+  let hash3 = 0;
+  for (const character of item.id ?? "")
+    hash3 = hash3 * 31 + character.charCodeAt(0) >>> 0;
+  return workItemIcons[hash3 % workItemIcons.length];
+}
+
+// server/work-items.ts
 var workItemInput = external_exports.object({
   id: external_exports.string().uuid().optional(),
   title: external_exports.string().trim().min(1).max(200),
+  icon: external_exports.enum(workItemIcons).optional(),
   description: external_exports.string().max(1e4),
   status: external_exports.enum(["planned", "active", "review", "done"]),
   threadIds: external_exports.array(external_exports.string().uuid()).max(500),
@@ -52213,7 +52246,12 @@ var WorkspaceStore = class {
     const database = new DatabaseSync2(this.path, { readOnly: true });
     try {
       const rows = database.prepare("SELECT data FROM work_items ORDER BY updated_at DESC, id").all();
-      return { items: rows.map((row) => JSON.parse(row.data)) };
+      return {
+        items: rows.map((row) => {
+          const item = JSON.parse(row.data);
+          return { ...item, icon: resolveWorkItemIcon(item) };
+        })
+      };
     } finally {
       database.close();
     }
@@ -52233,13 +52271,16 @@ var WorkspaceStore = class {
       const previous = value.id ? database.prepare("SELECT data FROM work_items WHERE id = ?").get(value.id) : void 0;
       if (value.id && !previous)
         throw new Error("\u5DE5\u4F5C\u4E8B\u9879\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
+      const previousItem = previous ? JSON.parse(previous.data) : void 0;
       const now2 = (/* @__PURE__ */ new Date()).toISOString();
       item = {
         ...value,
         id: value.id ?? randomUUID(),
+        // 未传图标的旧客户端更新事项时，保留用户原先的选择。
+        icon: value.icon ?? (previousItem ? resolveWorkItemIcon(previousItem) : randomWorkItemIcon()),
         // 对话可以关联到多个事项，同一事项内只保存一次。
         threadIds: [...new Set(value.threadIds)],
-        createdAt: previous ? JSON.parse(previous.data).createdAt : now2,
+        createdAt: previousItem?.createdAt ?? now2,
         updatedAt: now2
       };
       database.prepare(
@@ -52264,6 +52305,7 @@ var WorkspaceStore = class {
       const row = database.prepare("SELECT data FROM work_items WHERE id = ?").get(id);
       if (!row) throw new Error("\u5DE5\u4F5C\u4E8B\u9879\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
       item = JSON.parse(row.data);
+      item.icon = resolveWorkItemIcon(item);
       if (!item.threadIds.includes(threadId)) {
         if (item.threadIds.length >= 500)
           throw new RangeError("\u6BCF\u4E2A\u4E8B\u9879\u6700\u591A\u5173\u8054 500 \u6761\u5BF9\u8BDD\u3002");
@@ -52657,7 +52699,7 @@ function artifactRulesKey(rules) {
 }
 
 // server/work-artifacts.ts
-var artifactCacheVersion = 1;
+var artifactCacheVersion = 2;
 var rolloutName = /^rollout-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-([0-9a-f-]{36})(?:_[0-9a-f-]{36})?\.jsonl$/i;
 var documentExtensions = /* @__PURE__ */ new Set([
   ".md",
@@ -52724,9 +52766,23 @@ function nativePlans(text, threadId, detectedAt) {
   }
   return plans;
 }
+function bareUrlTarget(value) {
+  let depth = 0;
+  for (let index = 0; index < value.length; index++) {
+    if (value[index] === "(") depth++;
+    else if (value[index] === ")") {
+      if (depth === 0) {
+        value = value.slice(0, index);
+        break;
+      }
+      depth--;
+    }
+  }
+  return value.replace(/[\],.;!?，。；：！？、]+$/u, "");
+}
 function mergeRequest(value) {
   try {
-    const url3 = new URL(value.replace(/[)\],.;!?，。；：！？、]+$/u, ""));
+    const url3 = new URL(value);
     if (!["https:", "http:"].includes(url3.protocol) || url3.username || url3.password)
       return null;
     const pr = /^(\/[^/]+\/([^/]+)\/pull\/([1-9]\d*))(?:\/.*)?$/.exec(
@@ -52749,7 +52805,7 @@ function mergeRequest(value) {
 function configuredLink(value, prefixes) {
   if (!prefixes.length) return null;
   try {
-    const url3 = new URL(value.replace(/[)\],.;!?，。；：！？、]+$/u, ""));
+    const url3 = new URL(value);
     if (!["https:", "http:"].includes(url3.protocol) || url3.username || url3.password)
       return null;
     return prefixes.some((prefix) => {
@@ -52826,13 +52882,18 @@ function extract(text, threadId, detectedAt, cwd, prefixes) {
         label: label || basename4(path)
       });
   };
-  for (const match of body.matchAll(
-    /(?<!!)\[([^\]\n]+)\]\(\s*(?:<([^>\n]+)>|([^\n)]+))\s*\)/g
-  )) {
-    const target = (match[2] ?? match[3]).replace(/\s+["'][^"']*["']\s*$/, "");
-    add(target, match[1].replace(/[*_`]/g, "").trim().slice(0, 200));
-  }
-  for (const match of body.matchAll(/https?:\/\/[^\s<>"'`]+/g)) add(match[0]);
+  const bare = body.replace(
+    /(?<!!)\[([^\]\n]+)\]\(\s*(?:<([^>\n]+)>|([^\n)]+))\s*\)/g,
+    (_match, label, angle, plain) => {
+      const target = (angle ?? plain).replace(/\s+["'][^"']*["']\s*$/, "");
+      add(target, label.replace(/[*_`]/g, "").trim().slice(0, 200));
+      return " ";
+    }
+  );
+  for (const match of bare.matchAll(
+    /https?:\/\/[^\s<>"'`，。；：！？、（）【】]+/g
+  ))
+    add(bareUrlTarget(match[0]));
   for (const match of body.matchAll(/`([^`\n]+)`/g)) add(match[1]);
   return [...artifacts2.values(), ...nativePlans(text, threadId, detectedAt)];
 }
@@ -53316,7 +53377,7 @@ var ThreadArtifactIndex = class {
       task = (async () => {
         try {
           const data = JSON.parse(await readFile4(this.path(threadId), "utf8"));
-          if (data.schemaVersion !== 1 || (data.rulesKey ?? "[]") !== rulesKey || data.threadId !== threadId || typeof data.unavailable !== "boolean" || !Array.isArray(data.artifacts) || !data.artifacts.every(
+          if (data.schemaVersion !== 2 || (data.rulesKey ?? "[]") !== rulesKey || data.threadId !== threadId || typeof data.unavailable !== "boolean" || !Array.isArray(data.artifacts) || !data.artifacts.every(
             (artifact) => artifact?.threadId === threadId && typeof artifact.id === "string" && typeof artifact.label === "string" && typeof artifact.detectedAt === "string" && Number.isFinite(Date.parse(artifact.detectedAt)) && ((artifact.kind === "mergeRequest" || artifact.kind === "link") && typeof artifact.url === "string" || artifact.kind === "planFile" && typeof artifact.path === "string" && isAbsolute2(artifact.path))
           ))
             return;
@@ -53402,7 +53463,7 @@ var ThreadArtifactIndex = class {
       await Promise.all(
         ids.map(async (threadId) => {
           const row = {
-            schemaVersion: 1,
+            schemaVersion: 2,
             rulesKey,
             threadId,
             artifacts: found.artifacts.filter(

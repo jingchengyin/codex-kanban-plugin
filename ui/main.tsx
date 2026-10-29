@@ -1127,12 +1127,6 @@ function ThreadCard({
           {metrics}
         </details>
       )}
-      <ThreadWorkItems
-        thread={thread}
-        items={workItems}
-        onAdd={() => onAddItem(thread)}
-        onOpenItem={onOpenItem}
-      />
       {(artifactsByThread.has(thread.id) ||
         pendingArtifacts.has(thread.id)) && (
         <div
@@ -1156,6 +1150,12 @@ function ThreadCard({
           )}
         </div>
       )}
+      <ThreadWorkItems
+        thread={thread}
+        items={workItems}
+        onAdd={() => onAddItem(thread)}
+        onOpenItem={onOpenItem}
+      />
     </article>
   );
 }

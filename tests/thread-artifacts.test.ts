@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   stat,
   unlink,
@@ -136,7 +137,7 @@ test("cold indexes return pending, persist ready and empty results, and isolate 
     assert.deepEqual(ready.pendingThreadIds, []);
     for (const id of ids.slice(0, 3)) {
       const stored = JSON.parse(await readFile(cachePath(home, id), "utf8"));
-      assert.equal(stored.schemaVersion, 1);
+      assert.equal(stored.schemaVersion, 2);
       assert.equal(stored.threadId, id);
       assert.equal(stored.unavailable, id === "third");
       assert.equal(stored.artifacts.length, id === "first" ? 1 : 0);
@@ -206,7 +207,7 @@ test("invalid JSON, schema versions and mismatched thread IDs are rebuilt instea
     await writeFile(
       cachePath(home, "second"),
       JSON.stringify({
-        schemaVersion: 2,
+        schemaVersion: 0,
         threadId: "second",
         artifacts: [artifact("second")],
         unavailable: false,
@@ -215,7 +216,7 @@ test("invalid JSON, schema versions and mismatched thread IDs are rebuilt instea
     await writeFile(
       cachePath(home, "third"),
       JSON.stringify({
-        schemaVersion: 1,
+        schemaVersion: 2,
         threadId: "another-thread",
         artifacts: [artifact("another-thread")],
         unavailable: false,
@@ -244,7 +245,7 @@ test("invalid JSON, schema versions and mismatched thread IDs are rebuilt instea
     );
     for (const id of ids.slice(0, 3)) {
       const stored = JSON.parse(await readFile(cachePath(home, id), "utf8"));
-      assert.equal(stored.schemaVersion, 1);
+      assert.equal(stored.schemaVersion, 2);
       assert.equal(stored.threadId, id);
     }
     index.stop();
@@ -387,6 +388,83 @@ test("rule changes rebuild unchanged logs and persist the same outcomes across i
     assert.equal(remaining[0].kind, "mergeRequest");
     assert.deepEqual(await changed.readRules(), { urlPrefixes: [] });
     changed.stop();
+  }));
+
+test("parser upgrades rebuild both legacy caches without returning poisoned document URLs", () =>
+  fixture(async (home) => {
+    const prefix = "https://bytedance.sg.larkoffice.com/docx";
+    const url = `${prefix}/VTWBdRKXso20opxNAC2liEuDgpf`;
+    const log = join(home, "first.jsonl");
+    const database = new DatabaseSync(join(home, "state_5.sqlite"));
+    database.exec(
+      "CREATE TABLE threads(id TEXT PRIMARY KEY, cwd TEXT, rollout_path TEXT)",
+    );
+    database
+      .prepare("INSERT INTO threads VALUES(?, ?, ?)")
+      .run("first", home, log);
+    database.close();
+    await writeFile(log, final(`[消费优化方案](${url})，补齐完整链路。`));
+    const index = new ThreadArtifactIndex(home);
+    await index.saveRules({ urlPrefixes: [prefix] });
+    await until(
+      async () => (await index.read(["first"])).pendingThreadIds?.length === 0,
+    );
+    index.stop();
+
+    // 模拟旧解析器已保存的错误结果，保留原日志的偏移和文件状态。
+    const resultPath = cachePath(home, "first");
+    const result = JSON.parse(await readFile(resultPath, "utf8"));
+    const poisonedUrl = `${url})${encodeURI("，补齐完整链路")}`;
+    const poisoned = {
+      ...result.artifacts[0],
+      id: createHash("sha256")
+        .update(`link\0first\0${poisonedUrl}`)
+        .digest("hex"),
+      url: poisonedUrl,
+      label: poisonedUrl,
+    };
+    const directory = join(home, "kanban", "artifact-cache");
+    const [name] = await readdir(directory);
+    const parsePath = join(directory, name);
+    const parsed = JSON.parse(await readFile(parsePath, "utf8"));
+    await writeFile(
+      parsePath,
+      JSON.stringify({
+        ...parsed,
+        schemaVersion: 1,
+        state: { ...parsed.state, artifacts: [[poisoned.id, poisoned]] },
+      }),
+    );
+    await writeFile(
+      resultPath,
+      JSON.stringify({ ...result, schemaVersion: 1, artifacts: [poisoned] }),
+    );
+
+    const restarted = new ThreadArtifactIndex(home);
+    try {
+      const cold = await restarted.read(["first"]);
+      assert.deepEqual(cold.artifacts, []);
+      assert.deepEqual(cold.pendingThreadIds, ["first"]);
+      await until(
+        async () =>
+          (await restarted.read(["first"])).pendingThreadIds?.length === 0,
+      );
+      const ready = await restarted.read(["first"]);
+      assert.deepEqual(ready.artifacts, result.artifacts);
+      assert.deepEqual(ready.unavailableThreadIds, []);
+      assert.equal(ready.artifacts.length, 1);
+      assert.equal(ready.artifacts[0].label, "消费优化方案");
+      assert.equal(
+        JSON.parse(await readFile(resultPath, "utf8")).schemaVersion,
+        2,
+      );
+      assert.equal(
+        JSON.parse(await readFile(parsePath, "utf8")).schemaVersion,
+        2,
+      );
+    } finally {
+      restarted.stop();
+    }
   }));
 
 test("saving rules while a scan is running never publishes that scan under the new rules", () =>

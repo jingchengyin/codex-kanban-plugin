@@ -4,8 +4,10 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { WorkspaceStore } from "../server/work-items.js";
 import type { WorkItemInput } from "../shared/work-items.js";
+import { workItemIcons } from "../shared/work-item-icons.js";
 
 const threadId = "a0000000-0000-4000-8000-000000000001";
 const input: WorkItemInput = {
@@ -82,6 +84,62 @@ test("save identifies the created or updated item when several items share a tit
       update.items.find((item) => item.id === third.item.id),
       third.item,
     );
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("work item icons default once, persist manual choices and survive edits from older clients", async () => {
+  const home = await mkdtemp(join(tmpdir(), "taskboard-work-item-icons-"));
+  try {
+    const store = new WorkspaceStore(home);
+    const created = store.save(input).item;
+    assert.ok(created.icon && workItemIcons.includes(created.icon));
+    assert.equal(new WorkspaceStore(home).read().items[0].icon, created.icon);
+    const selected = store.save({ ...created, icon: "compass" }).item;
+    assert.equal(selected.icon, "compass");
+    const { icon: _icon, ...olderInput } = selected;
+    const updated = store.save({ ...olderInput, title: "更新事项名称" }).item;
+    assert.equal(updated.icon, "compass");
+    const linked = store.addThread(
+      updated.id,
+      "a0000000-0000-4000-8000-000000000002",
+    );
+    assert.equal(linked.item.icon, "compass");
+    assert.equal(new WorkspaceStore(home).read().items[0].icon, "compass");
+    assert.throws(() =>
+      store.save({ ...updated, icon: "unknown" } as unknown as WorkItemInput),
+    );
+    assert.deepEqual(store.read().items, linked.items);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("legacy work items get a stable icon without rewriting their stored record", async () => {
+  const home = await mkdtemp(
+    join(tmpdir(), "taskboard-work-item-legacy-icon-"),
+  );
+  try {
+    const store = new WorkspaceStore(home);
+    const { icon: _icon, ...legacy } = store.save(input).item;
+    const database = new DatabaseSync(store.path);
+    try {
+      database
+        .prepare("UPDATE work_items SET data = ? WHERE id = ?")
+        .run(JSON.stringify(legacy), legacy.id);
+      const first = store.read().items[0];
+      assert.ok(first.icon && workItemIcons.includes(first.icon));
+      assert.deepEqual(new WorkspaceStore(home).read().items, [first]);
+      const row = database
+        .prepare("SELECT data FROM work_items WHERE id = ?")
+        .get(legacy.id) as { data: string };
+      assert.deepEqual(JSON.parse(row.data), legacy);
+      assert.equal(store.addThread(legacy.id, threadId).item.icon, first.icon);
+      assert.equal(store.save(legacy).item.icon, first.icon);
+    } finally {
+      database.close();
+    }
   } finally {
     await rm(home, { recursive: true, force: true });
   }

@@ -19,6 +19,10 @@ import type {
 } from "../shared/work-items";
 import type { WorkReview, WorkSummary } from "../shared/work-review";
 import {
+  randomWorkItemIcon,
+  resolveWorkItemIcon,
+} from "../shared/work-item-icons";
+import {
   deleteWorkItem,
   openArtifactLink,
   openConversation,
@@ -29,6 +33,7 @@ import {
 import { formatDuration, formatTokens } from "./card-metrics";
 import { DetectedArtifacts } from "./detected-artifacts";
 import { useI18n } from "./i18n";
+import { WorkItemIcon, WorkItemIconPicker } from "./work-item-icon";
 import {
   reconcileWorkItemDraft,
   workItemSaveInput as saveInput,
@@ -52,6 +57,7 @@ const runtimeLabels = {
 } as const;
 const blankItem = (): WorkItemInput => ({
   title: "",
+  icon: randomWorkItemIcon(),
   description: "",
   status: "planned",
   threadIds: [],
@@ -447,7 +453,14 @@ export function WorkItems({
                   }}
                 >
                   <div className="work-card-heading">
-                    <h2>{item.title}</h2>
+                    <h2 className="work-item-title">
+                      <WorkItemIcon
+                        icon={item.icon}
+                        itemId={item.id}
+                        size={18}
+                      />
+                      <span>{item.title}</span>
+                    </h2>
                     <span className={`work-status work-status--${item.status}`}>
                       {t(statuses[item.status])}
                     </span>
@@ -700,6 +713,10 @@ function ItemEditor({
           />
         </div>
         <fieldset className="editor-fields">
+          <WorkItemIconPicker
+            value={resolveWorkItemIcon(draft)}
+            onChange={(icon) => update({ icon })}
+          />
           <label>
             {t("事项名称")}
             <input
@@ -1236,14 +1253,14 @@ export function WorkReviewPanel({ active }: { active: boolean }) {
                           )
                         }
                       >
-                        {record.title}
+                        <span title={record.userInput ?? undefined}>
+                          {record.userInput === ""
+                            ? t("未输入文字")
+                            : (record.userInput ?? t("未获取到用户输入"))}
+                        </span>
                         <ExternalLink size={12} />
                       </button>
-                      <p>
-                        {record.userInput === ""
-                          ? t("未输入文字")
-                          : (record.userInput ?? t("未获取到用户输入"))}
-                      </p>
+                      <p>{record.title}</p>
                       <div className="work-card-meta">
                         <span title={record.cwd}>{record.project}</span>
                         <span>
