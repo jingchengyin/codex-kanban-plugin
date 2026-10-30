@@ -1,6 +1,7 @@
 import { spawn, execFileSync } from "node:child_process";
 import { once } from "node:events";
 import { createInterface } from "node:readline";
+import { approvalRelay } from "./approval-relay.mjs";
 
 const cli = process.env.TASKBOARD_CODEX_CLI;
 const args = process.argv.slice(2);
@@ -52,6 +53,7 @@ async function relay() {
   });
   let socket;
   let input;
+  let approvals;
   let ended = false;
   let resolveEnd;
   const end = new Promise((ok) => {
@@ -101,13 +103,32 @@ async function relay() {
       throw new Error(
         "Codex backend did not open its WebSocket within 10 seconds",
       );
+    approvals = approvalRelay(endpoint, (message) => {
+      if (socket.readyState !== WebSocket.OPEN) return false;
+      socket.send(JSON.stringify(message));
+      return true;
+    });
+    // 确认转发不可用时保留桌面正常运行，原对话仍能处理所有请求。
+    await approvals.start().catch((error) => {
+      console.error(`看板确认转发不可用：${error.message}`);
+    });
     socket.addEventListener("message", (event) => {
+      try {
+        approvals.observe(JSON.parse(String(event.data)));
+      } catch {
+        /* 原始消息仍交给桌面端。 */
+      }
       process.stdout.write(String(event.data) + "\n");
     });
     socket.addEventListener("close", stop, { once: true });
     socket.addEventListener("error", stop, { once: true });
     input = createInterface({ input: process.stdin, crlfDelay: Infinity });
     input.on("line", (line) => {
+      try {
+        approvals.desktopResponse(JSON.parse(line));
+      } catch {
+        /* 保留原始转发行为。 */
+      }
       if (socket.readyState === WebSocket.OPEN) socket.send(line);
     });
     input.once("close", stop);
@@ -119,6 +140,7 @@ async function relay() {
     for (const signal of signals) process.off(signal, stop);
     process.stdin.off("end", stop);
     input?.close();
+    approvals?.close();
     process.stdin.pause();
     socket?.close();
     // 桌面端关闭 stdio 后只清理本转发器创建的后端。

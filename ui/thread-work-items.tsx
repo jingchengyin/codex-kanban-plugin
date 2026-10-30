@@ -1,9 +1,13 @@
-import { useEffect, useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties } from "react";
 import { createPortal } from "react-dom";
 import { Check, FolderPlus, Plus, X } from "lucide-react";
 import type { Thread } from "../shared/types";
 import type { WorkItem, WorkItemSaveResult } from "../shared/work-items";
-import { randomWorkItemIcon } from "../shared/work-item-icons";
+import {
+  randomWorkItemIcon,
+  resolveWorkItemIconColor,
+  type WorkItemIconColor,
+} from "../shared/work-item-icons";
 import { addThreadToWorkItem, saveWorkItem } from "./client";
 import { useI18n } from "./i18n";
 import { WorkItemIcon, WorkItemIconPicker } from "./work-item-icon";
@@ -33,11 +37,21 @@ export function ThreadWorkItems({ thread, items, onAdd, onOpenItem }: Props) {
             key={item.id}
             type="button"
             className="thread-work-item-tag"
+            style={
+              {
+                "--work-item-tag-color": `var(--work-icon-${resolveWorkItemIconColor(item)})`,
+              } as CSSProperties
+            }
             title={item.title}
             aria-label={t("打开事项：{title}", { title: item.title })}
             onClick={() => onOpenItem(item.id)}
           >
-            <WorkItemIcon icon={item.icon} itemId={item.id} size={12} />
+            <WorkItemIcon
+              icon={item.icon}
+              color={item.iconColor}
+              itemId={item.id}
+              size={14}
+            />
             <span>{item.title}</span>
           </button>
         ))}
@@ -74,6 +88,7 @@ export function ThreadWorkItemPicker({
   const [query, setQuery] = useState("");
   const [title, setTitle] = useState(thread.title.slice(0, 200));
   const [icon, setIcon] = useState(randomWorkItemIcon);
+  const [iconColor, setIconColor] = useState<WorkItemIconColor>();
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {
@@ -98,6 +113,7 @@ export function ThreadWorkItemPicker({
         : await saveWorkItem({
             title: title.trim(),
             icon,
+            iconColor,
             description: "",
             status: "planned",
             threadIds: [thread.id],
@@ -157,7 +173,11 @@ export function ThreadWorkItemPicker({
               onClick={() => void save(item.id)}
             >
               <span>
-                <WorkItemIcon icon={item.icon} itemId={item.id} />
+                <WorkItemIcon
+                  icon={item.icon}
+                  color={item.iconColor}
+                  itemId={item.id}
+                />
                 <span>{item.title}</span>
               </span>
               <small>
@@ -194,7 +214,9 @@ export function ThreadWorkItemPicker({
       >
         <WorkItemIconPicker
           value={icon}
+          color={iconColor}
           onChange={setIcon}
+          onColorChange={setIconColor}
           disabled={busy !== null}
         />
         <label className="thread-work-item-field">

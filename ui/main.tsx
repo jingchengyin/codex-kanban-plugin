@@ -52,6 +52,8 @@ import type {
 } from "../shared/work-items";
 import { ThreadWorkItems, ThreadWorkItemPicker } from "./thread-work-items";
 import { ThreadMonitoring } from "./thread-monitoring";
+import { ThreadConfirmations } from "./thread-confirmations";
+import type { Confirmations } from "../shared/confirmations";
 import { DetectedArtifacts } from "./detected-artifacts";
 import { ArtifactRulesSettings } from "./artifact-rules";
 import { WorkItems, WorkReviewPanel } from "./workspace";
@@ -76,6 +78,13 @@ import {
   isCurrentTurn,
 } from "./card-metrics";
 import { LanguageProvider, translate, useI18n, type Language } from "./i18n";
+import {
+  cachedSnapshot,
+  clearSnapshotCache,
+  readSnapshotCache,
+  reconcileSnapshot,
+  writeSnapshotCache,
+} from "./snapshot-cache";
 import "./style.css";
 
 const columns: {
@@ -143,13 +152,42 @@ function preference<T>(key: string, fallback: T): T {
     return fallback;
   }
 }
+
+/** 观察当前分页与最近候选，隐藏面板不继续保活对话。 */
+function observedThreadIds(
+  view: BoardPreferences["view"],
+  candidates: string[],
+  unknownOnly: boolean,
+): string[] {
+  if (view !== "board" || document.hidden) return [];
+  // 未知状态视图固定观察少量候选，避免已同步卡片移出后又退订回流。
+  if (unknownOnly) return candidates;
+  return [
+    ...new Set([
+      ...Array.from(
+        document.querySelectorAll<HTMLElement>(".thread-card[data-thread-id]"),
+        (card) => card.dataset.threadId!,
+      ),
+      ...candidates,
+    ]),
+  ].slice(0, 500);
+}
+
 function Board() {
   const { language, setLanguage, locale, t } = useI18n();
   const [preferences] = useState(() => readBoardPreferences(localStorage));
   const [view, setView] = useState<BoardPreferences["view"]>(preferences.view);
   const viewRef = useRef(view);
   viewRef.current = view;
-  const [snapshot, setSnapshot] = useState<Snapshot | null>(null);
+  const [readSource, setReadSource] = useState<string | null>(() =>
+    preference("read-source", null),
+  );
+  const readSourceRef = useRef(readSource);
+  const [snapshot, setSnapshot] = useState<Snapshot | null>(() =>
+    readSnapshotCache(localStorage, readSource),
+  );
+  const snapshotRef = useRef(snapshot);
+  snapshotRef.current = snapshot;
   const [discovery, setDiscovery] = useState<ArtifactDiscovery>({
     artifacts: [],
     unavailableThreadIds: [],
@@ -161,10 +199,9 @@ function Board() {
   const [query, setQuery] = useState("");
   const [scope, setScope] = useState<BoardScope>(preferences.scope);
   const [filters, setFilters] = useState<FilterValue>(preferences.filters);
-  const [readSource, setReadSource] = useState<string | null>(() =>
-    preference("read-source", null),
-  );
-  const readSourceRef = useRef(readSource);
+  const unknownOnlyRef = useRef(false);
+  unknownOnlyRef.current =
+    filters.state?.length === 1 && filters.state[0] === "unknown";
   const [sort, setSort] = useState<BoardPreferences["sort"]>(preferences.sort);
   const [layout, setLayout] = useState<BoardPreferences["layout"]>(
     preferences.layout,
@@ -183,27 +220,42 @@ function Board() {
   const [toast, setToast] = useState("");
   const [launching, setLaunching] = useState(false);
   const inFlight = useRef(false);
+  const candidatesRef = useRef<string[]>([]);
   const search = useRef<HTMLInputElement>(null);
+  /** 恢复上次分列但撤下确认，后台同步期间不清空现有卡片。 */
+  function showCachedSnapshot() {
+    if (!snapshotRef.current) return;
+    const cached = cachedSnapshot(snapshotRef.current);
+    snapshotRef.current = cached;
+    setSnapshot(cached);
+  }
   async function refresh() {
     if (inFlight.current) return;
     inFlight.current = true;
     setRefreshing(true);
+    const selection = readSourceRef.current;
     try {
-      const next = await readSnapshot(readSourceRef.current);
-      // 元数据暂不可读时保留已展示的本地对话，并取消其运行状态认证。
-      setSnapshot((previous) =>
-        !next.sources.metadata && previous
-          ? {
-              ...next,
-              threads: previous.threads.map((thread) => ({
-                ...thread,
-                fresh: false,
-              })),
-            }
-          : next,
+      const next = await readSnapshot(
+        selection,
+        observedThreadIds(
+          viewRef.current,
+          candidatesRef.current,
+          unknownOnlyRef.current,
+        ),
       );
+      if (selection !== readSourceRef.current) return;
+      // 按对话替换已恢复的真实状态，其余沿用旧分列并继续观察。
+      const merged = reconcileSnapshot(snapshotRef.current, next);
+      const visible = document.hidden ? cachedSnapshot(merged) : merged;
+      snapshotRef.current = visible;
+      setSnapshot(visible);
+      if (next.sources.metadata && !next.threads.length)
+        clearSnapshotCache(localStorage);
+      else writeSnapshotCache(localStorage, visible, selection);
       setFetchError(null);
     } catch (error) {
+      if (selection !== readSourceRef.current) return;
+      showCachedSnapshot();
       setFetchError(
         error instanceof Error ? error.message : "暂时无法刷新状态",
       );
@@ -268,9 +320,18 @@ function Board() {
     void refresh();
     const timer = setInterval(() => {
       if (!document.hidden) void refresh();
-    }, 1000);
+    }, 2000);
+    const release = () => {
+      // 宿主隐藏或移除面板时尽快退订；失败时由服务端心跳超时清理。
+      showCachedSnapshot();
+      void readSnapshot(readSourceRef.current, []).catch(() => {});
+    };
     const visible = () => {
-      if (!document.hidden) void refresh();
+      if (document.hidden) release();
+      else {
+        showCachedSnapshot();
+        void refresh();
+      }
     };
     const keys = (e: KeyboardEvent) => {
       if (
@@ -287,11 +348,14 @@ function Board() {
       }
     };
     document.addEventListener("visibilitychange", visible);
+    window.addEventListener("pagehide", release);
     window.addEventListener("keydown", keys);
     return () => {
       clearInterval(timer);
       document.removeEventListener("visibilitychange", visible);
+      window.removeEventListener("pagehide", release);
       window.removeEventListener("keydown", keys);
+      release();
     };
   }, []);
   useEffect(() => {
@@ -318,6 +382,26 @@ function Board() {
         map.set(id, [...(map.get(id) ?? []), item]);
     return map;
   }, [workItems]);
+  // 先忽略运行和已读筛选，避免初始未知状态把所有观察候选都筛掉。
+  const candidates = useMemo(
+    () =>
+      boardThreads
+        .filter(
+          (thread) =>
+            (!filters.project?.length ||
+              filters.project.includes(thread.project)) &&
+            matchesQuery(
+              thread,
+              query,
+              itemsByThread.get(thread.id)?.map((item) => item.title),
+            ),
+        )
+        .sort(compareByLastUserMessage)
+        .slice(0, 15)
+        .map((thread) => thread.id),
+    [boardThreads, filters.project, query, itemsByThread],
+  );
+  candidatesRef.current = candidates;
   const filtered = useMemo(
     () =>
       boardThreads.filter(
@@ -364,6 +448,12 @@ function Board() {
   const artifactThreadKey = JSON.stringify(
     displayed.map((thread) => thread.id).sort(),
   );
+  const observationQueryKey = JSON.stringify({ filters, query, sort });
+  const hasSnapshot = snapshot !== null;
+  useEffect(() => {
+    // 只跟随首次渲染和用户选择刷新，运行状态分列变化继续由心跳处理。
+    if (!document.hidden) void refresh();
+  }, [hasSnapshot, observationQueryKey, view, listLayout]);
   useEffect(() => {
     if (view !== "board" || artifactThreadKey === "[]") return;
     const threadIds = JSON.parse(artifactThreadKey) as string[];
@@ -427,6 +517,9 @@ function Board() {
   const selectReadSource = (value: string | null) => {
     readSourceRef.current = value;
     setReadSource(value);
+    const cached = readSnapshotCache(localStorage, value);
+    snapshotRef.current = cached;
+    setSnapshot(cached);
     try {
       localStorage.setItem("taskboard:read-source", JSON.stringify(value));
     } catch {
@@ -442,7 +535,7 @@ function Board() {
     }
   };
 
-  /** 打开独立启动入口，由用户按提示退出客户端后继续连接。 */
+  /** 保留共享后端启动器，供桌面直连不可用时选择兼容方式。 */
   async function launchLive() {
     setLaunching(true);
     try {
@@ -777,6 +870,8 @@ function Board() {
             <ConversationList
               threads={displayed}
               onOpen={open}
+              confirmations={snapshot?.confirmations}
+              onConfirmationSubmitted={() => void refresh()}
               artifactsByThread={artifactsByThread}
               pendingArtifacts={pendingArtifacts}
               onArtifactError={setToast}
@@ -800,6 +895,8 @@ function Board() {
                     belongsToColumn(thread, column.id, scope),
                   )}
                   onOpen={(thread) => void open(thread)}
+                  confirmations={snapshot?.confirmations}
+                  onConfirmationSubmitted={() => void refresh()}
                   unreadAvailable={snapshot?.sources.unread ?? false}
                   onConfigure={() => setSettings(true)}
                   artifactsByThread={artifactsByThread}
@@ -845,12 +942,19 @@ function Board() {
               {live ? <Wifi size={22} /> : <WifiOff size={22} />}
             </span>
             <div>
-              <h2>
-                {live ? t("共享状态服务已连接") : t("实时状态服务未连接")}
-              </h2>
-              <p>{snapshot?.connection.endpoint ?? "ws://127.0.0.1:19429"}</p>
+              <h2>{live ? t("实时状态已连接") : t("实时状态服务未连接")}</h2>
+              <p>
+                {snapshot?.connection.endpoint.startsWith("ws:")
+                  ? snapshot.connection.endpoint
+                  : t("当前 Codex 桌面")}
+              </p>
             </div>
           </div>
+          {snapshot?.connection.message && (
+            <p className="settings-note" role="status">
+              {t(snapshot.connection.message)}
+            </p>
+          )}
           <ReadSourcePicker
             sources={snapshot?.sources}
             value={readSource}
@@ -876,7 +980,11 @@ function Board() {
             <div>
               <span>{t("实时运行状态")}</span>
               <strong>
-                {live ? t("共享 App Server · 已连接") : t("等待共享后端")}
+                {live
+                  ? snapshot?.connection.endpoint.startsWith("ipc:")
+                    ? t("桌面对话 · 已连接")
+                    : t("共享 App Server · 已连接")
+                  : t("等待桌面连接")}
               </strong>
             </div>
           </div>
@@ -887,19 +995,28 @@ function Board() {
           <ArtifactRulesSettings
             onSaved={() => setArtifactRevision((current) => current + 1)}
           />
-          <h3>{t("接入实时状态")}</h3>
+          <h3>{t("实时连接")}</h3>
+          <p className="settings-note">
+            {t("正常打开 Codex 后，直接打开看板即可同步，无需重启客户端。")}
+          </p>
+          <p className="settings-note">
+            {t(
+              "按当前分页、项目和搜索范围同步本地对话。未加载或无法同步的对话显示为「状态待同步」，离开看板或隐藏面板后停止观察。",
+            )}
+          </p>
+          <h3>{t("兼容连接")}</h3>
           <div className="workspace-live-action">
             <Button
               icon={<Radio size={14} />}
               loading={launching}
               onClick={() => void launchLive()}
             >
-              {t("打开实时启动器")}
+              {t("打开兼容启动器")}
             </Button>
           </div>
           <p className="settings-note">
             {t(
-              "点击按钮即可打开启动器，无需输入命令。若 Codex 已打开，请按提示用 ⌘Q 完全退出，启动器会自动继续。",
+              "仅在桌面直连不可用时使用。兼容启动器会以共享模式打开 Codex；若客户端已运行，需要按提示完全退出。",
             )}
           </p>
           <p className="settings-note">{t("也可在插件目录的独立终端运行：")}</p>
@@ -911,12 +1028,12 @@ function Board() {
           </p>
           <p className="settings-note">
             {t(
-              "仅观察共享后端上的本地对话。未加载、失去连接或没有数据的状态会显示为「状态待同步」，不会猜测任务已经完成。实时连接断开与单条对话执行失败分别显示。",
+              "连接断开后保留最后快照，并取消实时状态标记；对话执行失败会单独显示。",
             )}
           </p>
           <div className="data-boundary">
             <ShieldCheck size={16} />
-            <span>{t("仅展示本机数据 · 不处理审批 · 不修改 Codex 数据")}</span>
+            <span>{t("本机对话与事项 · 确认操作仅在点击后提交")}</span>
           </div>
         </Modal>
       )}
@@ -938,6 +1055,8 @@ function Board() {
 }
 
 type CardActions = {
+  confirmations?: Confirmations;
+  onConfirmationSubmitted: () => void;
   onOpen: (thread: Thread) => void;
   artifactsByThread: Map<string, DetectedArtifact[]>;
   pendingArtifacts: Set<string>;
@@ -958,9 +1077,16 @@ function ThreadCard({
   workItems,
   onAddItem,
   onOpenItem,
+  confirmations,
+  onConfirmationSubmitted,
 }: CardActions & { thread: Thread; compact?: boolean }) {
   const { language, locale, t } = useI18n();
   const state = columnFor(thread);
+  const requests = thread.fresh
+    ? (confirmations?.requests.filter(
+        (request) => request.threadId === thread.id,
+      ) ?? [])
+    : [];
   const metrics = (
     <>
       <span className="card-model-info">
@@ -1020,7 +1146,10 @@ function ThreadCard({
     </>
   );
   return (
-    <article className={`thread-card ${compact ? "is-compact" : ""}`}>
+    <article
+      className={`thread-card ${compact ? "is-compact" : ""}`}
+      data-thread-id={thread.id}
+    >
       <button
         className="thread-card-open"
         onClick={() => onOpen(thread)}
@@ -1101,7 +1230,7 @@ function ThreadCard({
           <span
             className={`card-state ${columns.find((c) => c.id === columnFor(thread))?.color}`}
           >
-            {columnFor(thread) === "running" ? (
+            {columnFor(thread) === "running" && !thread.cachedColumn ? (
               <LoaderCircle size={11} className="spin" />
             ) : (
               <span className="card-state-dot" />
@@ -1120,6 +1249,19 @@ function ThreadCard({
           </span>
         </span>
       </button>
+      <ThreadConfirmations
+        requests={requests}
+        onSubmitted={onConfirmationSubmitted}
+      />
+      {state === "waiting" && !requests.length && (
+        <p className="confirmation-fallback">
+          {t(
+            confirmations?.available
+              ? "此请求需在原对话处理。"
+              : "确认连接暂不可用，请在原对话处理。",
+          )}
+        </p>
+      )}
       <ThreadMonitoring thread={thread} onError={onArtifactError} />
       {compact && (
         <details className="card-run-details">

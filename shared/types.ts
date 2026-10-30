@@ -1,3 +1,5 @@
+import type { Confirmations } from "./confirmations.js";
+
 export type ConnectionState =
   "connecting" | "connected" | "disconnected" | "disabled";
 export type RuntimeStatus = {
@@ -51,14 +53,20 @@ export type Thread = {
   waitingQuestion?: string | null;
   runtimeAt: string | null;
   fresh: boolean;
+  /** 页面恢复期间沿用的上次分列；只用于显示，不代表实时状态已核实。 */
+  cachedColumn?: Column;
   error: { message: string; at: string } | null;
 };
 export type Snapshot = {
   schemaVersion: 1;
   generatedAt: string;
   threads: Thread[];
+  /** 只含桌面原连接仍在等待的原生请求，读取快照不会提交确认。 */
+  confirmations?: Confirmations;
   /** 首次打开看板时，最近对话的运行状态仍在同步。 */
   syncingThreads?: boolean;
+  /** 界面正在显示缓存列表或等待部分对话重新同步。 */
+  cached?: boolean;
   connection: {
     state: ConnectionState;
     endpoint: string;
@@ -108,6 +116,7 @@ export function belongsToColumn(
 }
 
 export function columnFor(thread: Thread): Column {
+  if (!thread.fresh && thread.cachedColumn) return thread.cachedColumn;
   if (!thread.fresh || !thread.runtime) return "unknown";
   if (thread.runtime.type === "systemError" || thread.error) return "error";
   if (

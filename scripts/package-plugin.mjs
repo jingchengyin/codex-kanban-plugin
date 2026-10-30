@@ -87,6 +87,7 @@ for (const path of [
   "start-mcp.sh",
   "start-desktop-cli.sh",
   "desktop-cli.mjs",
+  "approval-relay.mjs",
 ]) {
   await cp(resolve(root, "scripts", path), resolve(plugin, "scripts", path));
 }

@@ -1,0 +1,126 @@
+.card-confirmation {
+  margin: 0 14px 14px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--amber) 45%, var(--line));
+  border-radius: 7px;
+  background: var(--soft);
+  font-size: 12px;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  min-width: 0;
+}
+.card-confirmation strong {
+  font-size: 12px;
+}
+.card-confirmation p {
+  margin: 7px 0;
+  white-space: pre-wrap;
+}
+.card-confirmation pre {
+  margin: 8px 0;
+  padding: 8px;
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font-size: 11px;
+}
+.confirmation-cwd,
+.confirmation-answer > span {
+  color: var(--muted);
+  font-size: 11px;
+}
+.card-confirmation summary {
+  cursor: pointer;
+}
+.confirmation-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.card-confirmation button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 36px;
+  padding: 7px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface);
+  text-align: left;
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+.card-confirmation button:hover:not(:disabled),
+.card-confirmation button[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--soft);
+}
+.card-confirmation .confirmation-accept {
+  background: var(--ink);
+  color: var(--surface);
+  border-color: var(--ink);
+}
+.card-confirmation .confirmation-accept:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--ink) 85%, var(--surface));
+}
+.card-confirmation fieldset {
+  min-width: 0;
+  margin: 12px 0;
+  padding: 0;
+  border: 0;
+}
+.card-confirmation legend {
+  padding: 0;
+  white-space: pre-wrap;
+}
+.confirmation-options {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0;
+}
+.confirmation-options button {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+}
+.confirmation-options small {
+  color: var(--muted);
+}
+.confirmation-answer {
+  display: grid;
+  gap: 4px;
+}
+.confirmation-answer input {
+  width: 100%;
+  padding: 8px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+}
+.confirmation-answer input:focus-visible,
+.card-confirmation summary:focus-visible {
+  outline: 2px solid var(--ink);
+  outline-offset: 2px;
+}
+.confirmation-error {
+  color: var(--red);
+}
+.confirmation-fallback {
+  margin: 0 14px 14px;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.6;
+}
+@media (prefers-reduced-motion: reduce) {
+  .card-confirmation button {
+    transition: none;
+  }
+}

@@ -6,6 +6,8 @@ import { z } from "zod";
 import {
   randomWorkItemIcon,
   resolveWorkItemIcon,
+  resolveWorkItemIconColor,
+  workItemIconColors,
   workItemIcons,
 } from "../shared/work-item-icons.js";
 import type {
@@ -19,6 +21,7 @@ export const workItemInput = z.object({
   id: z.string().uuid().optional(),
   title: z.string().trim().min(1).max(200),
   icon: z.enum(workItemIcons).optional(),
+  iconColor: z.enum(workItemIconColors).optional(),
   description: z.string().max(10000),
   status: z.enum(["planned", "active", "review", "done"]),
   threadIds: z.array(z.string().uuid()).max(500),
@@ -71,7 +74,11 @@ export class WorkspaceStore {
       return {
         items: rows.map((row) => {
           const item = JSON.parse(row.data) as WorkItem;
-          return { ...item, icon: resolveWorkItemIcon(item) };
+          return {
+            ...item,
+            icon: resolveWorkItemIcon(item),
+            iconColor: resolveWorkItemIconColor(item),
+          };
         }),
       };
     } finally {
@@ -102,15 +109,20 @@ export class WorkspaceStore {
         ? (JSON.parse(previous.data) as WorkItem)
         : undefined;
       const now = new Date().toISOString();
+      const icon =
+        value.icon ??
+        (previousItem
+          ? resolveWorkItemIcon(previousItem)
+          : randomWorkItemIcon());
       item = {
         ...value,
         id: value.id ?? randomUUID(),
         // 未传图标的旧客户端更新事项时，保留用户原先的选择。
-        icon:
-          value.icon ??
-          (previousItem
-            ? resolveWorkItemIcon(previousItem)
-            : randomWorkItemIcon()),
+        icon,
+        iconColor:
+          value.iconColor ??
+          previousItem?.iconColor ??
+          resolveWorkItemIconColor({ icon }),
         // 对话可以关联到多个事项，同一事项内只保存一次。
         threadIds: [...new Set(value.threadIds)],
         createdAt: previousItem?.createdAt ?? now,
@@ -144,6 +156,7 @@ export class WorkspaceStore {
       if (!row) throw new Error("工作事项不存在，请刷新后重试。");
       item = JSON.parse(row.data) as WorkItem;
       item.icon = resolveWorkItemIcon(item);
+      item.iconColor = resolveWorkItemIconColor(item);
       // 重复加入不改更新时间；同一操作重试不会产生重复关联。
       if (!item.threadIds.includes(threadId)) {
         if (item.threadIds.length >= 500)

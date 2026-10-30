@@ -5,6 +5,7 @@ import {
 } from "@modelcontextprotocol/ext-apps";
 import { OpenAIExtensions } from "@openai/mcp-extensions/app";
 import type { Snapshot } from "../shared/types";
+import type { ConfirmationReply } from "../shared/confirmations";
 import type {
   WorkItemInput,
   WorkItemSaveResult,
@@ -13,6 +14,7 @@ import type {
   ArtifactRules,
 } from "../shared/work-items";
 import type { WorkReview, WorkReviewOptions } from "../shared/work-review";
+import { cachedSnapshot } from "./snapshot-cache";
 
 let app: App | null = null;
 let extensions: OpenAIExtensions | null = null;
@@ -63,35 +65,41 @@ export function validSnapshot(value: unknown): value is Snapshot {
 }
 export async function readSnapshot(
   unreadSelection: string | null = null,
+  observedThreadIds?: string[],
 ): Promise<Snapshot> {
   await connect();
   if (initial && !unreadSelection) {
     const value = initial;
     initial = null;
-    return value;
+    // 宿主携带的列表立即用于首屏；下一次轮询重新核对状态并登记观察。
+    return cachedSnapshot(value);
   }
   let value: unknown;
   if (app) {
     const result = await app.callServerTool({
       name: "taskboard_snapshot",
-      arguments: { unreadSelection },
+      arguments: {
+        unreadSelection,
+        ...(observedThreadIds === undefined ? {} : { observedThreadIds }),
+      },
     });
     if (result.isError) throw new Error("插件状态服务暂不可用");
     value = result.structuredContent;
   } else {
-    // 预览首次打开显式登记同步；之后的轮询继续使用只读快照接口。
+    // 观察集合通过正文传输，避免分页卡片的 ID 超出 HTTP 请求行长度。
     const opening = !previewOpened;
+    const observing = opening || observedThreadIds !== undefined;
     const response = await fetch(
       opening
         ? "/api/board/open"
-        : `/api/snapshot${unreadSelection ? `?unreadSelection=${encodeURIComponent(unreadSelection)}` : ""}`,
+        : `/api/snapshot${!observing && unreadSelection ? `?unreadSelection=${encodeURIComponent(unreadSelection)}` : ""}`,
       {
         cache: "no-store",
-        ...(opening
+        ...(observing
           ? {
               method: "POST",
               headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ unreadSelection }),
+              body: JSON.stringify({ unreadSelection, observedThreadIds }),
             }
           : {}),
       },
@@ -171,6 +179,14 @@ async function workspaceRequest<T>(
 
 export const readWorkspace = () =>
   workspaceRequest<WorkspaceData>("taskboard_workspace", "/api/workspace");
+/** 确认按钮复用现有界面工具通道，不发送普通聊天消息。 */
+export const replyToConfirmation = (input: ConfirmationReply) =>
+  workspaceRequest<{ submitted: boolean }>(
+    "taskboard_confirmation_reply",
+    "/api/confirmations/respond",
+    input,
+    true,
+  );
 /** 规则统一存储在本机服务，供看板和工作事项共用。 */
 export const readArtifactRules = () =>
   workspaceRequest<ArtifactRules>(

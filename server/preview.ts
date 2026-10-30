@@ -69,7 +69,17 @@ const server = createServer(async (req, res) => {
         json(await discover(workspace.delete(input.id)));
       else if (url.pathname === "/api/live/launch")
         json(await launchLiveConnection());
-      else if (url.pathname === "/api/thread-artifacts") {
+      else if (url.pathname === "/api/confirmations/respond") {
+        try {
+          json(await bridge.replyToConfirmation(input));
+        } catch (error) {
+          res
+            .writeHead(409)
+            .end(
+              error instanceof Error ? error.message : "确认提交失败，请重试。",
+            );
+        }
+      } else if (url.pathname === "/api/thread-artifacts") {
         const ids = input.threadIds;
         if (
           !Array.isArray(ids) ||
@@ -82,16 +92,31 @@ const server = createServer(async (req, res) => {
           return;
         }
         json(await artifacts.read(ids));
-      } else if (url.pathname === "/api/board/open") {
+      } else if (
+        url.pathname === "/api/board/open" ||
+        url.pathname === "/api/snapshot"
+      ) {
         const selection = input.unreadSelection;
+        const ids = input.observedThreadIds;
         if (
-          selection != null &&
-          (typeof selection !== "string" || selection.length > 400)
+          (selection != null &&
+            (typeof selection !== "string" || selection.length > 400)) ||
+          (ids !== undefined &&
+            (!Array.isArray(ids) ||
+              ids.length > 500 ||
+              !ids.every(
+                (id: unknown) =>
+                  typeof id === "string" && id.length > 0 && id.length <= 200,
+              )))
         ) {
           res.writeHead(400).end();
           return;
         }
-        json(await bridge.open(selection ?? null));
+        json(
+          await (url.pathname === "/api/board/open"
+            ? bridge.open(selection ?? null, ids)
+            : bridge.snapshot(selection ?? null, ids)),
+        );
       } else res.writeHead(404).end("Not found");
       return;
     }

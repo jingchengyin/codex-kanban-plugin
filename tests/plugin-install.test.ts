@@ -145,6 +145,7 @@ for (const desktopPath of [false, true]) {
         assert.deepEqual(Object.keys(server.tools).sort(), [
           "taskboard_artifact_rules",
           "taskboard_artifact_rules_save",
+          "taskboard_confirmation_reply",
           "taskboard_live_launch",
           "taskboard_open",
           "taskboard_panel",
@@ -158,7 +159,8 @@ for (const desktopPath of [false, true]) {
         ]);
         assert.ok(
           server.resources.some(
-            (resource: any) => resource.uri === "ui://codex-taskboard/board",
+            (resource: any) =>
+              /^ui:\/\/codex-taskboard\/board-[a-f0-9]{16}\.html$/.test(resource.uri),
           ),
         );
       } finally {

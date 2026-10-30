@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
@@ -14,13 +15,15 @@ import { readWorkReview } from "./work-history.js";
 import { launchLiveConnection } from "./live-connection.js";
 import { ThreadArtifactIndex } from "./thread-artifacts.js";
 import { artifactRulesInput } from "./artifact-rules.js";
+import { confirmationReplyInput } from "./confirmations.js";
 import type { WorkspaceData } from "../shared/work-items.js";
 
-const uri = "ui://codex-taskboard/board";
 const html = readFileSync(
   fileURLToPath(new URL("../ui/index.html", import.meta.url)),
   "utf8",
 );
+// 宿主按资源地址缓存页面；HTML 变化时自动换地址，避免继续展示旧界面。
+const uri = `ui://codex-taskboard/board-${createHash("sha256").update(html).digest("hex").slice(0, 16)}.html`;
 const icon =
   "data:image/svg+xml," +
   encodeURIComponent(
@@ -69,12 +72,18 @@ const handle = serveStdio(
       }),
     );
     const snapshot = async (
-      args: { unreadSelection?: string | null } = {},
+      args: {
+        unreadSelection?: string | null;
+        observedThreadIds?: string[];
+      } = {},
       opening = false,
     ) => {
       const data = await (opening
-        ? bridge.open(args.unreadSelection ?? null)
-        : bridge.snapshot(args.unreadSelection ?? null));
+        ? bridge.open(args.unreadSelection ?? null, args.observedThreadIds)
+        : bridge.snapshot(
+            args.unreadSelection ?? null,
+            args.observedThreadIds,
+          ));
       return {
         content: [
           {
@@ -100,7 +109,7 @@ const handle = serveStdio(
         ...base,
         title: "对话看板",
         description:
-          "打开本机 Codex 对话看板；首次自动加载最近十五条待同步对话的状态，不发送消息或执行回合。",
+          "打开本机 Codex 对话看板，直接观察已运行桌面的对话状态，不发送消息或执行回合。",
         annotations: { ...base.annotations, readOnlyHint: false },
         _meta: {
           ui: { resourceUri: uri },
@@ -115,7 +124,7 @@ const handle = serveStdio(
         ...base,
         title: "对话看板",
         description:
-          "在当前对话侧面板中打开看板，首次自动加载最近十五条待同步对话的状态。",
+          "在当前对话侧面板中打开看板，直接观察已运行桌面的对话状态。",
         annotations: { ...base.annotations, readOnlyHint: false },
         _meta: {
           ui: { resourceUri: uri, visibility: ["app"] },
@@ -130,6 +139,10 @@ const handle = serveStdio(
         ...base,
         inputSchema: z.object({
           unreadSelection: z.string().max(400).nullable().optional(),
+          observedThreadIds: z
+            .array(z.string().min(1).max(200))
+            .max(500)
+            .optional(),
         }),
         title: "刷新看板",
         description:
@@ -149,6 +162,26 @@ const handle = serveStdio(
       ],
       structuredContent: data,
     });
+    server.registerTool(
+      "taskboard_confirmation_reply",
+      {
+        ...base,
+        inputSchema: confirmationReplyInput,
+        title: "提交看板确认",
+        description:
+          "仅供看板界面提交用户明确选择的原生确认结果，可能允许命令执行或文件修改。",
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          openWorldHint: true,
+        },
+        _meta: appMeta,
+      },
+      async (input) => ({
+        content: [{ type: "text" as const, text: "确认结果已提交。" }],
+        structuredContent: await bridge.replyToConfirmation(input),
+      }),
+    );
     server.registerTool(
       "taskboard_artifact_rules",
       {

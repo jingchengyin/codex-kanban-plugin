@@ -4,6 +4,9 @@ import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { z } from "zod";
+import { columnFor, type Snapshot } from "../shared/types";
+
+let fixtureSequence = 0;
 
 /** 用真实宿主协议握手测试客户端，只替换浏览器的消息投递与尺寸监听。 */
 async function hostFixture(
@@ -12,6 +15,7 @@ async function hostFixture(
     client: typeof import("../ui/client.js"),
     opened: string[],
     externalCalls: string[],
+    host: AppBridge,
   ) => Promise<void>,
 ) {
   const globals = [
@@ -112,9 +116,9 @@ async function hostFixture(
     await bridge.connect(transport);
     // 每次导入独立实例，让支持与不支持的宿主分别完成能力协商。
     const client = (await import(
-      `${new URL("../ui/client.ts", import.meta.url).href}?native-files=${supportsFiles}`
+      `${new URL("../ui/client.ts", import.meta.url).href}?native-files=${supportsFiles}-${++fixtureSequence}`
     )) as typeof import("../ui/client.js");
-    await run(client, opened, externalCalls);
+    await run(client, opened, externalCalls, bridge);
   } finally {
     await bridge.close();
     for (const key of globals) {
@@ -126,16 +130,18 @@ async function hostFixture(
 }
 
 test("file and conversation links use Codex host protocols without external fallback", async (t) => {
-  await t.test("supported host receives file paths and conversation deep links", () =>
-    hostFixture(true, async (client, opened, externalCalls) => {
-      const path = "/workspace/方案/迭代计划.md";
-      await client.openDetectedFile(path);
-      assert.deepEqual(opened, [path]);
-      assert.deepEqual(externalCalls, []);
-      const target = "01a09a03-bd00-71c2-9829-d89a84a479db";
-      await client.openConversation(target);
-      assert.deepEqual(externalCalls, [`openLink:codex://threads/${target}`]);
-    }),
+  await t.test(
+    "supported host receives file paths and conversation deep links",
+    () =>
+      hostFixture(true, async (client, opened, externalCalls) => {
+        const path = "/workspace/方案/迭代计划.md";
+        await client.openDetectedFile(path);
+        assert.deepEqual(opened, [path]);
+        assert.deepEqual(externalCalls, []);
+        const target = "01a09a03-bd00-71c2-9829-d89a84a479db";
+        await client.openConversation(target);
+        assert.deepEqual(externalCalls, [`openLink:codex://threads/${target}`]);
+      }),
   );
 
   await t.test(
@@ -150,4 +156,73 @@ test("file and conversation links use Codex host protocols without external fall
         assert.deepEqual(externalCalls, []);
       }),
   );
+});
+
+test("host-provided list restores immediately even when the view registers observed threads", async () => {
+  await hostFixture(true, async (client, _opened, externalCalls, host) => {
+    const snapshot: Snapshot = {
+      schemaVersion: 1,
+      generatedAt: "2026-10-30T10:00:00Z",
+      threads: [
+        {
+          id: "existing-thread",
+          title: "Existing conversation",
+          cwd: "/work",
+          project: "work",
+          updatedAt: "2026-10-30T10:00:00Z",
+          lastUserMessageAt: null,
+          kind: "user",
+          model: "model",
+          reasoningEffort: "high",
+          collaborationMode: "default",
+          goalStatus: "none",
+          turnUsage: null,
+          unread: false,
+          runtime: { type: "active", activeFlags: [] },
+          runtimeAt: "2026-10-30T10:00:00Z",
+          fresh: true,
+          error: null,
+        },
+      ],
+      confirmations: { available: true, requests: [] },
+      connection: {
+        state: "connected",
+        endpoint: "ipc://desktop",
+        since: null,
+        message: null,
+      },
+      sources: {
+        metadata: true,
+        unread: true,
+        unreadReason: "fixture",
+        metadataError: null,
+        unreadOptions: [],
+        unreadSelection: null,
+      },
+    };
+    await client.connect();
+    await host.sendToolInput({ arguments: {} });
+    await host.sendToolResult({ content: [], structuredContent: snapshot });
+    const restored = await client.readSnapshot(null, []);
+    assert.equal(restored.threads.length, 1);
+    assert.equal(restored.cached, true);
+    assert.equal(restored.threads[0].fresh, false);
+    assert.equal(columnFor(restored.threads[0]), "running");
+    assert.deepEqual(restored.confirmations, {
+      available: false,
+      requests: [],
+    });
+    assert.equal(externalCalls.length, 0);
+    let observed: unknown;
+    host.oncalltool = async ({ name, arguments: args }) => {
+      externalCalls.push(`callTool:${name}`);
+      observed = args?.observedThreadIds;
+      return { content: [], structuredContent: snapshot };
+    };
+    const fresh = await client.readSnapshot(null, ["existing-thread"]);
+    assert.equal(fresh.threads[0].fresh, true);
+    assert.notEqual(fresh.cached, true);
+    assert.deepEqual(observed, ["existing-thread"]);
+    assert.deepEqual(externalCalls, ["callTool:taskboard_snapshot"]);
+  });
 });

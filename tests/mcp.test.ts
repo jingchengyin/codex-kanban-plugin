@@ -49,7 +49,13 @@ for (const packaged of [false, true]) {
     try {
       await client.connect(transport);
       const tools = (await client.listTools()).tools;
-      assert.equal(tools.length, 12);
+      const uri = (
+        tools.find((tool) => tool.name === "taskboard_open")?._meta?.ui as any
+      )?.resourceUri;
+      assert.match(uri, /^ui:\/\/codex-taskboard\/board-[a-f0-9]{16}\.html$/);
+      for (const tool of tools)
+        assert.equal((tool._meta?.ui as any)?.resourceUri, uri);
+      assert.equal(tools.length, 13);
       assert.deepEqual(
         (
           tools.find((tool) => tool.name === "taskboard_open")?._meta?.[
@@ -67,6 +73,7 @@ for (const packaged of [false, true]) {
         [{ type: "thread" }],
       );
       const writes = new Set([
+        "taskboard_confirmation_reply",
         "taskboard_open",
         "taskboard_panel",
         "taskboard_work_item_save",
@@ -83,6 +90,7 @@ for (const packaged of [false, true]) {
             (tool) =>
               tool.name.startsWith("taskboard_work") ||
               tool.name === "taskboard_live_launch" ||
+              tool.name === "taskboard_confirmation_reply" ||
               tool.name.startsWith("taskboard_artifact_rules"),
           )
           .every((tool) => (tool._meta?.ui as any)?.visibility?.[0] === "app"),
@@ -113,7 +121,7 @@ for (const packaged of [false, true]) {
         { urlPrefixes: [prefix] },
       );
       const resource = await client.readResource({
-        uri: "ui://codex-taskboard/board",
+        uri,
       });
       assert.equal(resource.contents[0].mimeType, "text/html;profile=mcp-app");
       assert.ok("text" in resource.contents[0]);

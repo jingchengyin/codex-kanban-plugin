@@ -7,6 +7,7 @@ var __export = (target, all) => {
 
 // server/index.ts
 import { readFileSync } from "node:fs";
+import { createHash as createHash4 } from "node:crypto";
 import { fileURLToPath as fileURLToPath3 } from "node:url";
 
 // node_modules/@modelcontextprotocol/server/dist/chunk-vYduTEsO.mjs
@@ -9416,8 +9417,8 @@ function ko_default() {
 }
 
 // node_modules/zod/v4/locales/lt.js
-var capitalizeFirstCharacter = (text) => {
-  return text.charAt(0).toUpperCase() + text.slice(1);
+var capitalizeFirstCharacter = (text2) => {
+  return text2.charAt(0).toUpperCase() + text2.slice(1);
 };
 function getUnitTypeFromNumber(number7) {
   const abs = Math.abs(number7);
@@ -29371,7 +29372,7 @@ var require_core$3 = /* @__PURE__ */ __commonJSMin(((exports) => {
     }
     errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
       if (!errors || errors.length === 0) return "No errors";
-      return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text, msg) => text + separator + msg);
+      return errors.map((e) => `${dataVar}${e.instancePath} ${e.message}`).reduce((text2, msg) => text2 + separator + msg);
     }
     $dataMetaSchema(metaSchema, keywordsJsonPointers) {
       const rules = this.RULES.all;
@@ -42753,8 +42754,8 @@ function ko_default2() {
 }
 
 // node_modules/@openai/mcp-extensions/node_modules/zod/v4/locales/lt.js
-var capitalizeFirstCharacter2 = (text) => {
-  return text.charAt(0).toUpperCase() + text.slice(1);
+var capitalizeFirstCharacter2 = (text2) => {
+  return text2.charAt(0).toUpperCase() + text2.slice(1);
 };
 function getUnitTypeFromNumber2(number7) {
   const abs = Math.abs(number7);
@@ -51149,7 +51150,7 @@ var OpenAIExtensions = class {
 
 // server/status-bridge.ts
 import { homedir } from "node:os";
-import { basename as basename2 } from "node:path";
+import { basename as basename2, join as join3 } from "node:path";
 
 // server/local-data.ts
 import { DatabaseSync } from "node:sqlite";
@@ -51168,21 +51169,21 @@ function userText(payload) {
     (part, index) => (part?.type === "input_text" || part?.type === "text") && typeof part.text === "string" && (!Array.isArray(kinds) || kinds[index] === "user.text")
   ).map((part) => part.text);
   if (!parts.length) return null;
-  const text = parts.join("\n");
-  if (text.trimStart().startsWith("<send_user_message_question_reply>"))
+  const text2 = parts.join("\n");
+  if (text2.trimStart().startsWith("<send_user_message_question_reply>"))
     return null;
   if (!Array.isArray(kinds) && /^(?:# AGENTS\.md instructions\b|<(?:environment_context|external_codex_apps_open_page|subagent_notification)\b)/.test(
-    text.trimStart()
+    text2.trimStart()
   ))
     return null;
-  if (text.trimStart().startsWith("# Files mentioned by the user:")) {
+  if (text2.trimStart().startsWith("# Files mentioned by the user:")) {
     const message = parts.filter((part) => !/^<\/?image\b[^>]*>$/.test(part.trim())).join("\n");
     const request = /^## My request:[ \t]*(?:\r?\n|$)/m.exec(message);
     if (!request) return "";
     const body = message.slice(request.index + request[0].length).replace(/^(?:[ \t]*\r?\n)*/, "");
     return body.trim() ? body : "";
   }
-  return text;
+  return text2;
 }
 function monitoringTargets(item) {
   if (item?.type !== "McpToolCall" || item.server !== "codex_app" || item.tool !== "wait_threads" || item.status !== "completed" || item.error || item.result?.isError === true || item.arguments?.timeoutMs === 0 || !Array.isArray(item.arguments?.targets))
@@ -51216,11 +51217,11 @@ function event(line) {
     const at = record3.timestamp;
     if (record3.type === "response_item") {
       if (p.type !== "message" || p.role !== "user") return null;
-      const text = userText(p);
-      return text === null ? null : {
+      const text2 = userText(p);
+      return text2 === null ? null : {
         type: "user_input",
         at,
-        userInput: text,
+        userInput: text2,
         id: typeof p.internal_chat_message_metadata_passthrough?.turn_id === "string" ? p.internal_chat_message_metadata_passthrough.turn_id : void 0
       };
     }
@@ -51254,11 +51255,11 @@ function event(line) {
       } : null;
     }
     if (p.type === "user_message" && typeof p.message === "string") {
-      const text = userText({ content: [{ type: "text", text: p.message }] });
-      return text === null ? null : {
+      const text2 = userText({ content: [{ type: "text", text: p.message }] });
+      return text2 === null ? null : {
         type: "user_input",
         at,
-        userInput: text,
+        userInput: text2,
         id: typeof p.turn_id === "string" ? p.turn_id : void 0
       };
     }
@@ -51669,12 +51670,525 @@ async function readLocalData(home, selection = null) {
   }
 }
 
+// server/desktop-ipc.ts
+import { randomUUID } from "node:crypto";
+import { createConnection } from "node:net";
+import { join as join2 } from "node:path";
+var ownerMethods = /* @__PURE__ */ new Set([
+  "thread-follower-command-approval-decision",
+  "thread-follower-file-approval-decision",
+  "thread-follower-permissions-request-approval-response",
+  "thread-follower-submit-user-input",
+  "thread-follower-submit-mcp-server-elicitation-response"
+]);
+var DesktopIpc = class {
+  constructor(options) {
+    this.options = options;
+  }
+  options;
+  socket;
+  stopped = true;
+  clientId;
+  retry;
+  watched = /* @__PURE__ */ new Set();
+  conversations = /* @__PURE__ */ new Map();
+  pending = /* @__PURE__ */ new Map();
+  /** 只连接现有 socket，不创建路由器或启动新的 Codex 后端。 */
+  start() {
+    if (!this.stopped) return;
+    this.stopped = false;
+    this.connect();
+  }
+  /** 面板结束使用时解除观察，释放原窗口为 follower 保留的运行态。 */
+  stop() {
+    this.stopped = true;
+    clearTimeout(this.retry);
+    if (this.clientId) for (const id of this.watched) this.follow(id, false);
+    const socket = this.socket;
+    this.socket = void 0;
+    this.clientId = void 0;
+    this.invalidateAll();
+    this.rejectPending(new Error("\u684C\u9762\u72B6\u6001\u8FDE\u63A5\u5DF2\u5173\u95ED\u3002"));
+    socket?.end();
+  }
+  /** 只保留调用方当前需要的对话，取消订阅后立即撤下旧确认状态。 */
+  watch(threadIds) {
+    const next = new Set(threadIds);
+    for (const id of this.watched)
+      if (!next.has(id)) {
+        this.follow(id, false);
+        this.invalidate(id);
+      }
+    for (const id of next) if (!this.watched.has(id)) this.follow(id, true);
+    this.watched = next;
+  }
+  get(threadId) {
+    return this.conversations.get(threadId);
+  }
+  /** 用户明确作答后才转给当前 owner；路由成功不代表原请求已完成。 */
+  requestOwner(threadId, method, params) {
+    const conversation = this.conversations.get(threadId);
+    if (!conversation || !this.clientId)
+      return Promise.reject(
+        new Error("\u8BE5\u5BF9\u8BDD\u7684\u684C\u9762\u8FDE\u63A5\u5DF2\u5931\u6548\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002")
+      );
+    if (!ownerMethods.has(method))
+      return Promise.reject(new Error("\u770B\u677F\u6682\u4E0D\u652F\u6301\u6B64\u7C7B\u684C\u9762\u64CD\u4F5C\u3002"));
+    return this.request(method, params, conversation.ownerClientId, threadId);
+  }
+  /** 重新初始化观察者身份；断线后撤销旧状态，再恢复当前订阅。 */
+  connect() {
+    if (this.stopped) return;
+    this.options.onState("connecting");
+    const socket = createConnection(
+      this.options.socketPath ?? join2(this.options.home, "ipc", "ipc.sock")
+    );
+    this.socket = socket;
+    let buffer = Buffer.alloc(0);
+    let disconnected = false;
+    const lose = (message = "\u672A\u8FDE\u63A5 Codex \u684C\u9762\uFF0C\u5B9E\u65F6\u72B6\u6001\u6682\u4E0D\u53EF\u7528\u3002") => {
+      if (disconnected || this.socket !== socket) return;
+      disconnected = true;
+      this.socket = void 0;
+      this.clientId = void 0;
+      this.invalidateAll();
+      this.rejectPending(new Error(message));
+      socket.destroy();
+      if (!this.stopped) {
+        this.options.onState("disconnected", message);
+        this.retry = setTimeout(
+          () => this.connect(),
+          this.options.retryMs ?? 4e3
+        );
+      }
+    };
+    socket.on("connect", () => {
+      void this.request("initialize", { clientType: "codex-kanban" }).then((result) => {
+        if (this.socket !== socket) return;
+        if (typeof result?.clientId !== "string")
+          throw new Error("Codex \u684C\u9762\u8FD4\u56DE\u4E86\u65E0\u6548\u7684\u8FDE\u63A5\u8EAB\u4EFD\u3002");
+        this.clientId = result.clientId;
+        this.options.onState("connected");
+        for (const id of this.watched) this.follow(id, true);
+      }).catch(() => lose());
+    });
+    socket.on("data", (data) => {
+      buffer = Buffer.concat([buffer, data]);
+      try {
+        while (buffer.length >= 4) {
+          const size = buffer.readUInt32LE();
+          if (buffer.length < size + 4) return;
+          const message = JSON.parse(buffer.subarray(4, size + 4).toString());
+          buffer = buffer.subarray(size + 4);
+          this.receive(message);
+        }
+      } catch {
+        lose("Codex \u684C\u9762\u72B6\u6001\u534F\u8BAE\u4E0D\u517C\u5BB9\uFF0C\u5B9E\u65F6\u72B6\u6001\u6682\u4E0D\u53EF\u7528\u3002");
+      }
+    });
+    socket.on("error", () => lose());
+    socket.on("close", () => lose());
+  }
+  /** 按桌面窗口使用的长度帧写入，保持原协议和本地请求版本。 */
+  send(message) {
+    if (!this.socket?.writable) return false;
+    const payload = Buffer.from(JSON.stringify(message));
+    const frame = Buffer.alloc(4 + payload.length);
+    frame.writeUInt32LE(payload.length);
+    payload.copy(frame, 4);
+    this.socket.write(frame);
+    return true;
+  }
+  /** 用独立请求 ID 等待路由回复，连接失效时统一拒绝未完成请求。 */
+  request(method, params, ownerClientId, threadId) {
+    return new Promise((resolve2, reject) => {
+      const requestId = randomUUID();
+      const timer = setTimeout(() => {
+        this.pending.delete(requestId);
+        reject(new Error("Codex \u684C\u9762\u8BF7\u6C42\u8D85\u65F6\uFF0C\u8BF7\u5237\u65B0\u540E\u786E\u8BA4\u7ED3\u679C\u3002"));
+      }, 5e3);
+      this.pending.set(requestId, {
+        resolve: resolve2,
+        reject,
+        timer,
+        threadId
+      });
+      if (!this.send({
+        type: "request",
+        requestId,
+        sourceClientId: this.clientId ?? "initializing-client",
+        version: method === "initialize" ? 0 : 1,
+        method,
+        params,
+        ...ownerClientId ? { targetClientId: ownerClientId } : {}
+      })) {
+        clearTimeout(timer);
+        this.pending.delete(requestId);
+        reject(new Error("\u684C\u9762\u72B6\u6001\u8FDE\u63A5\u5DF2\u65AD\u5F00\u3002"));
+      }
+    });
+  }
+  /** 只声明观察关系，不请求恢复对话，也不取得执行所有权。 */
+  follow(threadId, following) {
+    if (!this.clientId) return;
+    this.send({
+      type: "broadcast",
+      method: "thread-stream-following-changed",
+      sourceClientId: this.clientId,
+      version: 1,
+      params: { conversationId: threadId, hostId: "local", following }
+    });
+  }
+  /** 接收原窗口快照与顺序增量，原窗口离开后立即撤销其旧状态。 */
+  receive(message) {
+    if (message.type === "client-discovery-request") {
+      this.send({
+        type: "client-discovery-response",
+        requestId: message.requestId,
+        response: { canHandle: false }
+      });
+      return;
+    }
+    if (message.type === "response") {
+      const pending = this.pending.get(message.requestId);
+      if (!pending) return;
+      this.pending.delete(message.requestId);
+      clearTimeout(pending.timer);
+      if (message.resultType !== "success")
+        pending.reject(new Error(message.error || "Codex \u684C\u9762\u5904\u7406\u8BF7\u6C42\u5931\u8D25\u3002"));
+      else pending.resolve(message.result);
+      return;
+    }
+    if (message.type !== "broadcast" || message.targetClientIds && !message.targetClientIds.includes(this.clientId))
+      return;
+    if (message.method === "client-status-changed") {
+      if (message.params?.status === "disconnected") {
+        for (const [id2, value] of this.conversations)
+          if (value.ownerClientId === message.params.clientId)
+            this.invalidate(id2);
+      }
+      return;
+    }
+    if (message.method === "ipc-connection-reset") {
+      this.invalidateAll();
+      for (const id2 of this.watched) this.follow(id2, true);
+      return;
+    }
+    if (message.method === "thread-stream-following-status-requested") {
+      const { conversationId, hostId: hostId2 } = message.params ?? {};
+      if (message.version === 1 && hostId2 === "local" && this.watched.has(conversationId))
+        this.follow(conversationId, true);
+      return;
+    }
+    if (message.method !== "thread-stream-state-changed") return;
+    const { conversationId: id, hostId, change } = message.params ?? {};
+    if (hostId !== "local" || !this.watched.has(id)) return;
+    if (message.version !== 11)
+      throw new Error("unsupported-desktop-state-version");
+    if (typeof message.sourceClientId !== "string") return;
+    const current = this.conversations.get(id);
+    if (change?.type === "snapshot") {
+      if (!change.conversationState || !Number.isInteger(change.revision))
+        return;
+      if (current && current.ownerClientId !== message.sourceClientId)
+        this.invalidate(id);
+      const value = {
+        state: change.conversationState,
+        ownerClientId: message.sourceClientId,
+        revision: change.revision
+      };
+      this.conversations.set(id, value);
+      this.options.onConversation(id, value);
+      return;
+    }
+    if (change?.type !== "patches" || !current) return;
+    if (current.ownerClientId !== message.sourceClientId || current.revision !== change.baseRevision || !Number.isInteger(change.revision) || change.revision <= current.revision) {
+      this.invalidate(id);
+      this.follow(id, true);
+      return;
+    }
+    try {
+      current.state = applyPatches(current.state, change.patches);
+      current.revision = change.revision;
+      this.options.onConversation(id, current);
+    } catch {
+      this.invalidate(id);
+      this.follow(id, true);
+    }
+  }
+  invalidate(threadId) {
+    if (this.conversations.delete(threadId))
+      this.options.onUnavailable(threadId);
+    this.rejectPending(
+      new Error("\u5BF9\u8BDD\u539F\u7A97\u53E3\u8FDE\u63A5\u5DF2\u5931\u6548\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002"),
+      threadId
+    );
+  }
+  invalidateAll() {
+    for (const id of this.conversations.keys()) this.invalidate(id);
+  }
+  rejectPending(error112, threadId) {
+    for (const [id, pending] of this.pending)
+      if (!threadId || pending.threadId === threadId) {
+        clearTimeout(pending.timer);
+        this.pending.delete(id);
+        pending.reject(error112);
+      }
+  }
+};
+function applyPatches(state, patches) {
+  if (!Array.isArray(patches)) throw new Error("invalid-desktop-patches");
+  for (const { op, path, value } of patches) {
+    if (!Array.isArray(path)) throw new Error("invalid-desktop-patch-path");
+    if (!path.length) {
+      if (op !== "replace") throw new Error("invalid-desktop-root-patch");
+      state = value;
+      continue;
+    }
+    let parent = state;
+    for (const key2 of path.slice(0, -1)) {
+      if (parent === null || typeof parent !== "object")
+        throw new Error("missing-desktop-patch-parent");
+      parent = parent[key2];
+    }
+    if (parent === null || typeof parent !== "object")
+      throw new Error("missing-desktop-patch-parent");
+    const key = path[path.length - 1];
+    if (op === "remove") {
+      if (Array.isArray(parent)) parent.splice(Number(key), 1);
+      else delete parent[key];
+    } else if (op === "add") {
+      if (Array.isArray(parent)) parent.splice(Number(key), 0, value);
+      else parent[key] = value;
+    } else if (op === "replace") parent[key] = value;
+    else throw new Error("unsupported-desktop-patch");
+  }
+  return state;
+}
+
+// server/desktop-confirmations.ts
+import { randomUUID as randomUUID2 } from "node:crypto";
+import { setTimeout as pause } from "node:timers/promises";
+
+// server/confirmations.ts
+var replyIdentity = external_exports.object({
+  id: external_exports.uuid(),
+  threadId: external_exports.string().min(1).max(200)
+});
+var confirmationReplyInput = external_exports.union([
+  replyIdentity.extend({ decision: external_exports.enum(["accept", "decline", "cancel"]) }).strict(),
+  replyIdentity.extend({
+    answers: external_exports.record(
+      external_exports.string(),
+      external_exports.object({ answers: external_exports.array(external_exports.string().max(2e4)).length(1) })
+    )
+  }).strict()
+]);
+function relayUrl(endpoint, path) {
+  const port = Number(new URL(endpoint).port) + 1;
+  return `http://127.0.0.1:${port}${path}`;
+}
+async function readConfirmations(endpoint) {
+  try {
+    const response = await fetch(relayUrl(endpoint, "/pending"), {
+      signal: AbortSignal.timeout(1e3)
+    });
+    if (!response.ok) return { available: false, requests: [] };
+    const data = await response.json();
+    return data.available === true && Array.isArray(data.requests) ? data : { available: false, requests: [] };
+  } catch {
+    return { available: false, requests: [] };
+  }
+}
+async function replyToConfirmation(endpoint, input2) {
+  const parsed = confirmationReplyInput.parse(input2);
+  const response = await fetch(relayUrl(endpoint, "/respond"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(parsed),
+    signal: AbortSignal.timeout(5e3)
+  });
+  if (!response.ok)
+    throw new Error(await response.text() || "\u786E\u8BA4\u63D0\u4EA4\u5931\u8D25\uFF0C\u8BF7\u91CD\u8BD5\u3002");
+  return { submitted: true };
+}
+
+// server/desktop-confirmations.ts
+var supported = {
+  "item/commandExecution/requestApproval": "command",
+  "item/fileChange/requestApproval": "fileChange",
+  "item/tool/requestUserInput": "userInput"
+};
+var stale = () => new Error("\u8BE5\u8BF7\u6C42\u5DF2\u5904\u7406\u6216\u5DF2\u5931\u6548\uFF0C\u8BF7\u5237\u65B0\u770B\u677F\u3002");
+var text = (value) => typeof value === "string" ? value : null;
+function fileChanges(state, params) {
+  const turns = [
+    ...Array.isArray(state.turns) ? state.turns : [],
+    ...Object.values(state.turnHistory?.history?.entitiesByKey ?? {})
+  ];
+  for (const turn of turns) {
+    if (turn?.turnId !== params.turnId || !Array.isArray(turn.items)) continue;
+    const item = turn.items.find(
+      (entry) => entry?.type === "fileChange" && entry.id === params.itemId
+    );
+    if (Array.isArray(item?.changes) && item.changes.length > 0 && item.changes.every(
+      (change) => typeof change?.path === "string" && typeof change.diff === "string"
+    ))
+      return item.changes;
+  }
+}
+function describe5(threadId, raw, state) {
+  const kind = supported[raw?.method];
+  const params = raw?.params;
+  if (!kind || !["string", "number"].includes(typeof raw.id) || params?.threadId !== threadId || kind === "command" && params.kind && params.kind !== "command")
+    return null;
+  const changes = kind === "fileChange" ? fileChanges(state, params) : void 0;
+  const decisions = kind === "userInput" ? [] : kind === "command" ? (params.availableDecisions ?? ["accept", "decline", "cancel"]).filter(
+    (decision) => ["accept", "decline", "cancel"].includes(decision)
+  ) : changes ? ["accept", "decline", "cancel"] : ["decline", "cancel"];
+  const details = Object.fromEntries(
+    Object.entries({
+      network: params.networkApprovalContext,
+      permissions: params.additionalPermissions,
+      ...kind === "fileChange" ? { grantRoot: params.grantRoot } : {}
+    }).filter(([, value]) => value != null)
+  );
+  const questions = kind === "userInput" && Array.isArray(params.questions) ? params.questions.map((question) => ({
+    id: question.id,
+    question: question.question,
+    isSecret: question.isSecret === true,
+    allowOther: question.isOther === true || !question.options?.length,
+    options: question.options ?? []
+  })) : [];
+  if (kind === "userInput" && (!questions.length || questions.some(
+    (question) => typeof question.id !== "string" || typeof question.question !== "string" || !Array.isArray(question.options)
+  )))
+    return null;
+  return {
+    threadId,
+    kind,
+    reason: text(params.reason),
+    command: text(params.command),
+    cwd: text(params.cwd),
+    details: changes ? changes.map((change) => `${change.path}
+${change.diff}`).join("\n\n") + (params.grantRoot ? `
+
+grantRoot: ${params.grantRoot}` : "") : Object.keys(details).length ? JSON.stringify(details, null, 2) : null,
+    decisions,
+    questions
+  };
+}
+var DesktopConfirmations = class {
+  constructor(ipc, timeoutMs = 5e3) {
+    this.ipc = ipc;
+    this.timeoutMs = timeoutMs;
+  }
+  ipc;
+  timeoutMs;
+  threads = /* @__PURE__ */ new Map();
+  /** 每个原请求保留稳定的卡片 ID；owner 或请求内容改变后旧 ID 失效。 */
+  update(threadId, conversation) {
+    const previous = this.threads.get(threadId);
+    const next = /* @__PURE__ */ new Map();
+    for (const raw of conversation.state.requests ?? []) {
+      const confirmation = describe5(threadId, raw, conversation.state);
+      if (!confirmation) continue;
+      const key = JSON.stringify([conversation.ownerClientId, raw]);
+      const known = previous?.get(key);
+      next.set(key, {
+        owner: conversation.ownerClientId,
+        raw,
+        confirmation: {
+          ...confirmation,
+          id: known?.confirmation.id ?? randomUUID2()
+        },
+        sent: known?.sent ?? false
+      });
+    }
+    this.threads.set(threadId, next);
+  }
+  /** 掉线、取消观察或 owner 退出时，立即撤下对应卡片。 */
+  remove(threadId) {
+    this.threads.delete(threadId);
+  }
+  /** 清除本次桌面连接内的全部请求标识。 */
+  clear() {
+    this.threads.clear();
+  }
+  /** 读取前再次对照当前缓存，不把上一次快照里的请求当作仍待处理。 */
+  read() {
+    for (const threadId of this.threads.keys()) {
+      const current = this.ipc.get(threadId);
+      if (current) this.update(threadId, current);
+      else this.remove(threadId);
+    }
+    return {
+      available: this.threads.size > 0,
+      requests: [...this.threads.values()].flatMap(
+        (requests) => [...requests.values()].filter((request) => !request.sent).map((request) => request.confirmation)
+      )
+    };
+  }
+  /** 只提交一次；等待原请求从同一 owner 的快照移除后再返回已提交。 */
+  async reply(input2) {
+    const parsed = confirmationReplyInput.parse(input2);
+    this.read();
+    const pending = [
+      ...this.threads.get(parsed.threadId)?.values() ?? []
+    ].find((entry) => entry.confirmation.id === parsed.id && !entry.sent);
+    if (!pending) throw stale();
+    const current = this.ipc.get(parsed.threadId);
+    if (!current || current.ownerClientId !== pending.owner) throw stale();
+    const params = {
+      conversationId: parsed.threadId,
+      requestId: pending.raw.id
+    };
+    let method;
+    if (pending.confirmation.kind === "userInput") {
+      if (!("answers" in parsed))
+        throw new Error("\u786E\u8BA4\u5185\u5BB9\u65E0\u6548\uFF0C\u8BF7\u68C0\u67E5\u540E\u91CD\u8BD5\u3002");
+      const answers = parsed.answers;
+      const questions = pending.confirmation.questions;
+      if (Object.keys(answers).length !== questions.length || !questions.every((question) => {
+        const answer = answers[question.id]?.answers[0];
+        return typeof answer === "string" && answer.trim() && (question.allowOther || question.options.some((option) => option.label === answer));
+      }))
+        throw new Error("\u786E\u8BA4\u5185\u5BB9\u65E0\u6548\uFF0C\u8BF7\u68C0\u67E5\u540E\u91CD\u8BD5\u3002");
+      method = "thread-follower-submit-user-input";
+      params.response = { answers };
+    } else {
+      if (!("decision" in parsed) || !pending.confirmation.decisions.includes(parsed.decision))
+        throw new Error("\u786E\u8BA4\u5185\u5BB9\u65E0\u6548\uFF0C\u8BF7\u68C0\u67E5\u540E\u91CD\u8BD5\u3002");
+      method = pending.confirmation.kind === "command" ? "thread-follower-command-approval-decision" : "thread-follower-file-approval-decision";
+      params.decision = parsed.decision;
+    }
+    pending.sent = true;
+    try {
+      await this.ipc.requestOwner(parsed.threadId, method, params);
+    } catch {
+      throw new Error("\u786E\u8BA4\u53D1\u9001\u672A\u5B8C\u6210\uFF0C\u8BF7\u5728\u539F\u5BF9\u8BDD\u6838\u5BF9\u7ED3\u679C\uFF0C\u907F\u514D\u91CD\u590D\u63D0\u4EA4\u3002");
+    }
+    const deadline = Date.now() + this.timeoutMs;
+    do {
+      const latest = this.ipc.get(parsed.threadId);
+      if (!this.threads.has(parsed.threadId) || !latest || latest.ownerClientId !== pending.owner)
+        throw stale();
+      if (!(latest.state.requests ?? []).some(
+        (request) => request.id === pending.raw.id && request.method === pending.raw.method
+      ))
+        return { submitted: true };
+      await pause(25);
+    } while (Date.now() < deadline);
+    throw new Error("\u786E\u8BA4\u7ED3\u679C\u5C1A\u672A\u540C\u6B65\uFF0C\u8BF7\u5728\u539F\u5BF9\u8BDD\u6838\u5BF9\uFF0C\u907F\u514D\u91CD\u590D\u63D0\u4EA4\u3002");
+  }
+};
+
 // server/user-input.ts
 function questionSummary(question) {
   if (typeof question?.title !== "string") return null;
-  const text = question.title.replace(/\s+/g, " ").trim();
-  const characters = [...text];
-  return characters.length > 280 ? characters.slice(0, 280).join("") + "\u2026" : text || null;
+  const text2 = question.title.replace(/\s+/g, " ").trim();
+  const characters = [...text2];
+  return characters.length > 280 ? characters.slice(0, 280).join("") + "\u2026" : text2 || null;
 }
 function inputState(turnId, items, previous) {
   const state = {
@@ -51723,6 +52237,7 @@ function compareByLastUserMessage(a, b) {
   return (b.lastUserMessageAt ?? "").localeCompare(a.lastUserMessageAt ?? "") || a.id.localeCompare(b.id);
 }
 function columnFor(thread) {
+  if (!thread.fresh && thread.cachedColumn) return thread.cachedColumn;
   if (!thread.fresh || !thread.runtime) return "unknown";
   if (thread.runtime.type === "systemError" || thread.error) return "error";
   if (thread.pendingUserInput && (thread.runtime.type === "active" || thread.runtime.type === "idle"))
@@ -51747,6 +52262,9 @@ function localEndpoint(value) {
   return url3.toString();
 }
 var StatusBridge = class {
+  desktop;
+  desktopConfirmations;
+  observationLease;
   socket;
   stopped = false;
   retry;
@@ -51767,27 +52285,119 @@ var StatusBridge = class {
   endpoint;
   home;
   constructor(options = {}) {
-    this.endpoint = localEndpoint(
-      options.endpoint ?? process.env.TASKBOARD_WS_URL ?? "ws://127.0.0.1:19429"
-    );
     this.home = options.home ?? process.env.CODEX_HOME ?? `${homedir()}/.codex`;
+    const websocket = options.endpoint ?? process.env.TASKBOARD_WS_URL;
+    this.endpoint = websocket ? localEndpoint(websocket) : `ipc://${join3(this.home, "ipc", "ipc.sock")}`;
     this.connection = {
       state: "connecting",
       endpoint: this.endpoint,
       since: null,
       message: null
     };
+    if (!websocket) {
+      this.desktop = new DesktopIpc({
+        home: this.home,
+        onState: (state, message) => {
+          this.state(state, message ?? null);
+          if (state === "connected") this.initialSyncComplete = true;
+        },
+        onConversation: (id, value) => this.rememberDesktop(id, value),
+        onUnavailable: (id) => {
+          this.userInput.delete(id);
+          this.modes.delete(id);
+          const runtime = this.runtime.get(id);
+          if (runtime) runtime.waitingSince = null;
+          this.desktopConfirmations?.remove(id);
+        }
+      });
+      this.desktopConfirmations = new DesktopConfirmations(this.desktop);
+    }
   }
   start() {
     this.stopped = false;
-    this.connect();
+    if (this.desktop) this.desktop.start();
+    else this.connect();
   }
   stop() {
     this.stopped = true;
     clearTimeout(this.retry);
     clearInterval(this.hydration);
+    clearTimeout(this.observationLease);
+    this.desktop?.stop();
+    this.desktopConfirmations?.clear();
     this.socket?.close();
     this.failPending();
+  }
+  /** UI 心跳续租当前观察集合，宿主直接销毁面板后也会自动退订。 */
+  observeDesktop(threadIds) {
+    if (!this.desktop) return;
+    this.desktop.watch(threadIds);
+    clearTimeout(this.observationLease);
+    if (threadIds.length) {
+      this.observationLease = setTimeout(() => this.desktop?.watch([]), 15e3);
+      this.observationLease.unref();
+    }
+  }
+  /** 从原窗口快照恢复状态与提问，历史索引继续由本地读取提供。 */
+  rememberDesktop(id, value) {
+    const state = value.state;
+    this.remember({
+      id,
+      title: state.title,
+      cwd: state.cwd,
+      source: state.source,
+      // 桌面状态使用毫秒，复用 App Server 映射前转回秒。
+      updatedAt: typeof state.updatedAt === "number" ? state.updatedAt / 1e3 : void 0,
+      status: state.threadRuntimeStatus
+    });
+    const collaboration = state.latestCollaborationMode?.mode ?? state.latestCollaborationMode;
+    const goal = state.threadGoal?.status ?? "none";
+    this.modes.set(id, {
+      collaborationMode: ["plan", "default"].includes(collaboration) ? collaboration : null,
+      goalStatus: [
+        "active",
+        "paused",
+        "blocked",
+        "usageLimited",
+        "budgetLimited",
+        "complete",
+        "none"
+      ].includes(goal) ? goal : null
+    });
+    const turns = Array.isArray(state.turns) ? state.turns : [];
+    const history = state.turnHistory?.history;
+    const ordered = Array.isArray(history?.islands) ? history.islands.flatMap(
+      (island) => (island.entries ?? []).map((entry) => history.entitiesByKey?.[entry.value]).filter(Boolean)
+    ) : [];
+    const byId = /* @__PURE__ */ new Map();
+    for (const turn of [...ordered, ...turns]) {
+      const key = turn?.turnId ?? turn?.id;
+      if (typeof key !== "string") continue;
+      const previous2 = byId.get(key);
+      const items2 = /* @__PURE__ */ new Map();
+      for (const item of [...previous2?.items ?? [], ...turn.items ?? []])
+        items2.set(item?.id ?? item, item);
+      byId.set(key, { ...previous2, ...turn, items: [...items2.values()] });
+    }
+    const nativeTurns = [...byId.values()];
+    const items = nativeTurns.flatMap((turn) => turn.items ?? []).map(
+      (item) => (
+        // 桌面会把已接收的续写消息折叠为 steering，仍应视作用户已回复。
+        item?.type === "steeringUserMessage" && item.status === "accepted" ? { ...item, type: "userMessage" } : item
+      )
+    );
+    const previous = this.userInput.get(id);
+    this.userInput.set(id, inputState("desktop", items));
+    const current = this.userInput.get(id);
+    for (const [key, question] of current.pending) {
+      const known = previous?.pending.get(key);
+      if (known) question.since = known.since;
+    }
+    const runtime = this.runtime.get(id);
+    const latestTurn = nativeTurns.at(-1);
+    if (runtime)
+      runtime.error = latestTurn?.status === "failed" ? { message: "\u672C\u8F6E\u6267\u884C\u5931\u8D25\uFF0C\u8BF7\u5728\u539F\u5BF9\u8BDD\u67E5\u770B\u8BE6\u60C5\u3002", at: runtime.at } : null;
+    this.desktopConfirmations?.update(id, value);
   }
   state(state, message = null) {
     this.connection = { state, endpoint: this.endpoint, since: now(), message };
@@ -52075,15 +52685,19 @@ var StatusBridge = class {
     }
   }
   /** 首次打开登记一次同步意图；连接尚未就绪时由连接完成后接续。 */
-  async open(selection = null) {
+  async open(selection = null, observedThreadIds) {
     this.initialSyncRequested = true;
-    const data = await this.snapshot(selection);
-    this.beginInitialSync();
+    const data = await this.snapshot(selection, observedThreadIds);
+    if (this.desktop && observedThreadIds === void 0)
+      this.observeDesktop(
+        data.threads.filter((thread) => thread.kind === "user").slice(0, 15).map((thread) => thread.id)
+      );
+    else this.beginInitialSync();
     return data;
   }
   /** 每个看板服务只同步一批，定时快照和重连不会继续加载下一批。 */
   beginInitialSync() {
-    if (!this.initialSyncRequested || this.initialSync || this.connection.state !== "connected")
+    if (!this.initialSyncRequested || this.desktop || this.initialSync || this.connection.state !== "connected")
       return;
     this.initialSync = this.syncInitialThreads().catch(() => {
     }).finally(() => {
@@ -52120,7 +52734,8 @@ var StatusBridge = class {
       );
     }
   }
-  async snapshot(selection = null) {
+  async snapshot(selection = null, observedThreadIds) {
+    if (observedThreadIds !== void 0) this.observeDesktop(observedThreadIds);
     const cached3 = this.cache;
     const hit = cached3 && cached3.selection === selection && Date.now() - cached3.at < 1e3;
     const local = hit ? cached3.data : await readLocalData(this.home, selection);
@@ -52141,7 +52756,7 @@ var StatusBridge = class {
           runtime: value.status,
           pendingUserInput: hasUnansweredInput(this.userInput.get(id)),
           runtimeAt: value.at,
-          fresh: this.connection.state === "connected",
+          fresh: this.connection.state === "connected" && (!this.desktop || !!this.desktop.get(id)),
           error: value.error
         };
         const waiting = columnFor(merged) === "waiting";
@@ -52153,11 +52768,28 @@ var StatusBridge = class {
         });
       }
     }
+    const confirmations = this.connection.state === "connected" ? this.desktopConfirmations?.read() ?? await readConfirmations(this.endpoint) : { available: false, requests: [] };
+    if (this.desktop && this.connection.state === "connected")
+      for (const [id, thread] of threads) {
+        const state = this.desktop.get(id)?.state;
+        if (!state) continue;
+        const confirmation = confirmations.requests.find(
+          (request) => request.threadId === id
+        );
+        threads.set(id, {
+          ...thread,
+          model: typeof state.latestModel === "string" ? state.latestModel : thread.model,
+          reasoningEffort: typeof state.latestReasoningEffort === "string" ? state.latestReasoningEffort : thread.reasoningEffort,
+          unread: selection === null && typeof state.hasUnreadTurn === "boolean" ? state.hasUnreadTurn : thread.unread,
+          waitingQuestion: thread.waitingQuestion ?? confirmation?.questions[0]?.question ?? null
+        });
+      }
     return {
       schemaVersion: 1,
       generatedAt: now(),
       syncingThreads: this.initialSyncRequested && !this.initialSyncComplete && this.connection.state !== "disconnected",
       threads: [...threads.values()].sort(compareByLastUserMessage),
+      confirmations,
       connection: { ...this.connection },
       sources: {
         metadata: local.metadata,
@@ -52169,12 +52801,18 @@ var StatusBridge = class {
       }
     };
   }
+  /** 用户提交前检查当前连接，原请求是否有效由桌面转发器最终核对。 */
+  async replyToConfirmation(input2) {
+    if (this.connection.state !== "connected")
+      throw new Error("\u5B9E\u65F6\u72B6\u6001\u8FDE\u63A5\u5DF2\u65AD\u5F00\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5\u540E\u91CD\u8BD5\u3002");
+    return this.desktopConfirmations ? this.desktopConfirmations.reply(input2) : replyToConfirmation(this.endpoint, input2);
+  }
 };
 
 // server/work-items.ts
-import { randomUUID } from "node:crypto";
+import { randomUUID as randomUUID3 } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join as join2 } from "node:path";
+import { dirname, join as join4 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // shared/work-item-icons.ts
@@ -52194,7 +52832,55 @@ var workItemIcons = [
   "palette",
   "compass",
   "zap",
-  "flag"
+  "flag",
+  "terminal",
+  "git-branch",
+  "git-pull-request",
+  "git-commit",
+  "cpu",
+  "workflow",
+  "network",
+  "cloud",
+  "server",
+  "hard-drive",
+  "container",
+  "boxes",
+  "globe",
+  "search",
+  "scan",
+  "filter",
+  "settings",
+  "sliders",
+  "timer",
+  "clock",
+  "calendar",
+  "checklist",
+  "check-circle",
+  "circle-dot",
+  "milestone",
+  "list-todo",
+  "briefcase",
+  "building",
+  "users",
+  "user",
+  "messages",
+  "mail",
+  "bell",
+  "megaphone",
+  "pen-tool",
+  "paintbrush",
+  "image",
+  "camera",
+  "video",
+  "music",
+  "headphones",
+  "heart",
+  "star",
+  "sparkles",
+  "trophy",
+  "gem",
+  "leaf",
+  "coffee"
 ];
 function randomWorkItemIcon() {
   return workItemIcons[Math.floor(Math.random() * workItemIcons.length)];
@@ -52204,7 +52890,22 @@ function resolveWorkItemIcon(item) {
   let hash3 = 0;
   for (const character of item.id ?? "")
     hash3 = hash3 * 31 + character.charCodeAt(0) >>> 0;
-  return workItemIcons[hash3 % workItemIcons.length];
+  return workItemIcons[hash3 % 16];
+}
+var workItemIconColors = [
+  "blue",
+  "violet",
+  "pink",
+  "red",
+  "orange",
+  "amber",
+  "green",
+  "teal",
+  "cyan",
+  "slate"
+];
+function resolveWorkItemIconColor(item) {
+  return item.iconColor ?? workItemIconColors[workItemIcons.indexOf(resolveWorkItemIcon(item)) % workItemIconColors.length];
 }
 
 // server/work-items.ts
@@ -52212,6 +52913,7 @@ var workItemInput = external_exports.object({
   id: external_exports.string().uuid().optional(),
   title: external_exports.string().trim().min(1).max(200),
   icon: external_exports.enum(workItemIcons).optional(),
+  iconColor: external_exports.enum(workItemIconColors).optional(),
   description: external_exports.string().max(1e4),
   status: external_exports.enum(["planned", "active", "review", "done"]),
   threadIds: external_exports.array(external_exports.string().uuid()).max(500),
@@ -52238,7 +52940,7 @@ var workItemThreadInput = external_exports.object({
 var WorkspaceStore = class {
   path;
   constructor(home) {
-    this.path = join2(home, "kanban", "workspace.sqlite");
+    this.path = join4(home, "kanban", "workspace.sqlite");
   }
   /** 首次查看返回空列表，只有保存事项时才创建数据库。 */
   read() {
@@ -52249,7 +52951,11 @@ var WorkspaceStore = class {
       return {
         items: rows.map((row) => {
           const item = JSON.parse(row.data);
-          return { ...item, icon: resolveWorkItemIcon(item) };
+          return {
+            ...item,
+            icon: resolveWorkItemIcon(item),
+            iconColor: resolveWorkItemIconColor(item)
+          };
         })
       };
     } finally {
@@ -52273,11 +52979,13 @@ var WorkspaceStore = class {
         throw new Error("\u5DE5\u4F5C\u4E8B\u9879\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
       const previousItem = previous ? JSON.parse(previous.data) : void 0;
       const now2 = (/* @__PURE__ */ new Date()).toISOString();
+      const icon2 = value.icon ?? (previousItem ? resolveWorkItemIcon(previousItem) : randomWorkItemIcon());
       item = {
         ...value,
-        id: value.id ?? randomUUID(),
+        id: value.id ?? randomUUID3(),
         // 未传图标的旧客户端更新事项时，保留用户原先的选择。
-        icon: value.icon ?? (previousItem ? resolveWorkItemIcon(previousItem) : randomWorkItemIcon()),
+        icon: icon2,
+        iconColor: value.iconColor ?? previousItem?.iconColor ?? resolveWorkItemIconColor({ icon: icon2 }),
         // 对话可以关联到多个事项，同一事项内只保存一次。
         threadIds: [...new Set(value.threadIds)],
         createdAt: previousItem?.createdAt ?? now2,
@@ -52306,6 +53014,7 @@ var WorkspaceStore = class {
       if (!row) throw new Error("\u5DE5\u4F5C\u4E8B\u9879\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
       item = JSON.parse(row.data);
       item.icon = resolveWorkItemIcon(item);
+      item.iconColor = resolveWorkItemIconColor(item);
       if (!item.threadIds.includes(threadId)) {
         if (item.threadIds.length >= 500)
           throw new RangeError("\u6BCF\u4E2A\u4E8B\u9879\u6700\u591A\u5173\u8054 500 \u6761\u5BF9\u8BDD\u3002");
@@ -52342,7 +53051,7 @@ var WorkspaceStore = class {
 // server/work-history.ts
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 import { open as open3, stat as stat2 } from "node:fs/promises";
-import { basename as basename3, join as join3 } from "node:path";
+import { basename as basename3, join as join5 } from "node:path";
 function consume2(state, event2) {
   event2 = { ...event2, at: new Date(event2.at).toISOString() };
   if (event2.model) state.model = event2.model;
@@ -52553,7 +53262,7 @@ async function readWorkReview(home, options) {
   };
   let database;
   try {
-    database = new DatabaseSync3(join3(home, "state_5.sqlite"), {
+    database = new DatabaseSync3(join5(home, "state_5.sqlite"), {
       readOnly: true
     });
     const columns = new Set(
@@ -52668,7 +53377,7 @@ async function launchLiveConnection() {
 // server/thread-artifacts.ts
 import { createHash as createHash3 } from "node:crypto";
 import { mkdir as mkdir3, readFile as readFile4, stat as stat4, writeFile as writeFile3 } from "node:fs/promises";
-import { isAbsolute as isAbsolute2, join as join6 } from "node:path";
+import { isAbsolute as isAbsolute2, join as join8 } from "node:path";
 
 // server/work-artifacts.ts
 import { createHash as createHash2 } from "node:crypto";
@@ -52686,7 +53395,7 @@ import {
   dirname as dirname2,
   extname,
   isAbsolute,
-  join as join4,
+  join as join6,
   normalize,
   resolve
 } from "node:path";
@@ -52711,10 +53420,10 @@ var documentExtensions = /* @__PURE__ */ new Set([
 ]);
 var planName = /(?:^|[\s/_.-])(?:plans?|proposals?|designs?|spec(?:ification)?s?)(?:$|[\s/_.-])|方案|计划|设计/i;
 var planDirectory = /^(?:plans?|proposals?|designs?|spec(?:ification)?s?|方案|计划|设计)$/i;
-function withoutCodeBlocks(text) {
+function withoutCodeBlocks(text2) {
   let fence = "";
   const lines = [];
-  for (const line of text.split(/\r?\n/)) {
+  for (const line of text2.split(/\r?\n/)) {
     const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
     if (marker) {
       if (!fence) fence = marker;
@@ -52729,11 +53438,11 @@ function withoutCodeBlocks(text) {
 function artifactId(kind, threadId, target) {
   return createHash2("sha256").update(`${kind}\0${threadId}\0${target}`).digest("hex");
 }
-function nativePlans(text, threadId, detectedAt) {
+function nativePlans(text2, threadId, detectedAt) {
   const plans = [];
   let fence = "";
   let content = null;
-  for (const line of text.split(/(?<=\n)/)) {
+  for (const line of text2.split(/(?<=\n)/)) {
     const marker = /^\s{0,3}(`{3,}|~{3,})/.exec(line)?.[1];
     if (marker) {
       if (!fence) fence = marker;
@@ -52837,8 +53546,8 @@ function planPath(value, label, cwd) {
     return null;
   }
 }
-function extract(text, threadId, detectedAt, cwd, prefixes) {
-  const body = withoutCodeBlocks(text);
+function extract(text2, threadId, detectedAt, cwd, prefixes) {
+  const body = withoutCodeBlocks(text2);
   const artifacts2 = /* @__PURE__ */ new Map();
   const add = (value, label = "") => {
     const mr = mergeRequest(value);
@@ -52895,7 +53604,7 @@ function extract(text, threadId, detectedAt, cwd, prefixes) {
   ))
     add(bareUrlTarget(match[0]));
   for (const match of body.matchAll(/`([^`\n]+)`/g)) add(match[1]);
-  return [...artifacts2.values(), ...nativePlans(text, threadId, detectedAt)];
+  return [...artifacts2.values(), ...nativePlans(text2, threadId, detectedAt)];
 }
 function rememberArtifact(artifacts2, artifact) {
   const previous = artifacts2.get(artifact.id);
@@ -52947,11 +53656,11 @@ function consume3(state, line, threadId, prefixes) {
     state.pending = [];
     return;
   }
-  let text;
+  let text2;
   if (record3.type === "event_msg" && payload.type === "agent_message" && typeof payload.message === "string")
-    text = payload.message;
+    text2 = payload.message;
   else if (record3.type === "response_item" && payload.type === "message" && payload.role === "assistant" && Array.isArray(payload.content))
-    text = payload.content.filter(
+    text2 = payload.content.filter(
       (part) => ["output_text", "text"].includes(part?.type) && typeof part.text === "string"
     ).map((part) => part.text).join("\n");
   else return;
@@ -52959,9 +53668,9 @@ function consume3(state, line, threadId, prefixes) {
   const phase = payload.phase ?? record3.phase;
   if (channel === "final" || phase === "final_answer") {
     state.pending = [];
-    commit(extract(text, threadId, at, state.cwd, prefixes));
+    commit(extract(text2, threadId, at, state.cwd, prefixes));
   } else if (!channel && !phase)
-    state.pending = extract(text, threadId, at, state.cwd, prefixes);
+    state.pending = extract(text2, threadId, at, state.cwd, prefixes);
 }
 var WorkArtifactReader = class {
   cache = /* @__PURE__ */ new Map();
@@ -53018,7 +53727,7 @@ var WorkArtifactReader = class {
     for (const directory of ["sessions", "archived_sessions"]) {
       let entries;
       try {
-        entries = await readdir(join4(home, directory), {
+        entries = await readdir(join6(home, directory), {
           recursive: true,
           withFileTypes: true
         });
@@ -53031,7 +53740,7 @@ var WorkArtifactReader = class {
         if (!id) continue;
         let paths = candidates.get(id);
         if (!paths) candidates.set(id, paths = /* @__PURE__ */ new Set());
-        paths.add(join4(entry.parentPath, entry.name));
+        paths.add(join6(entry.parentPath, entry.name));
       }
     }
     index.candidates = candidates;
@@ -53116,7 +53825,7 @@ var WorkArtifactReader = class {
     let database;
     const rows = /* @__PURE__ */ new Map();
     try {
-      database = new DatabaseSync4(join4(home, "state_5.sqlite"), {
+      database = new DatabaseSync4(join6(home, "state_5.sqlite"), {
         readOnly: true
       });
       const query = database.prepare(
@@ -53147,7 +53856,7 @@ var WorkArtifactReader = class {
           const pendingKey = `${key}\0${rulesKey}`;
           let scan = this.pending.get(pendingKey);
           if (!scan) {
-            const cachePath = join4(
+            const cachePath = join6(
               home,
               "kanban",
               "artifact-cache",
@@ -53197,7 +53906,7 @@ var WorkArtifactReader = class {
   }
   /** 原生计划原样导出到插件缓存，复用 Codex 文件预览；未变化时不重写。 */
   async exportPlan(home, plan) {
-    const path = join4(home, "kanban", "plans", `${plan.id}.md`);
+    const path = join6(home, "kanban", "plans", `${plan.id}.md`);
     let previous = null;
     try {
       previous = await readFile2(path, "utf8");
@@ -53272,9 +53981,9 @@ var WorkArtifactReader = class {
 };
 
 // server/artifact-rules.ts
-import { randomUUID as randomUUID2 } from "node:crypto";
+import { randomUUID as randomUUID4 } from "node:crypto";
 import { mkdir as mkdir2, readFile as readFile3, rename, rm, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname3, join as join5 } from "node:path";
+import { dirname as dirname3, join as join7 } from "node:path";
 var artifactRulesInput = external_exports.object({
   urlPrefixes: external_exports.array(
     external_exports.string().trim().min(1).max(4e3).url().refine((value) => {
@@ -53287,7 +53996,7 @@ var artifactRulesInput = external_exports.object({
 var ArtifactRulesStore = class {
   path;
   constructor(home) {
-    this.path = join5(home, "kanban", "artifact-rules.json");
+    this.path = join7(home, "kanban", "artifact-rules.json");
   }
   /** 首次打开保留内置规则，不创建文件或默认添加外部前缀。 */
   async read() {
@@ -53305,7 +54014,7 @@ var ArtifactRulesStore = class {
   async save(input2) {
     const rules = artifactRulesInput.parse(input2);
     await mkdir2(dirname3(this.path), { recursive: true });
-    const temporary = `${this.path}.${randomUUID2()}.tmp`;
+    const temporary = `${this.path}.${randomUUID4()}.tmp`;
     try {
       await writeFile2(temporary, JSON.stringify(rules), { mode: 384 });
       await rename(temporary, this.path);
@@ -53360,7 +54069,7 @@ var ThreadArtifactIndex = class {
   }
   /** 对话标识单独散列，解析状态与可直接读取的成果结果分别存储。 */
   path(threadId) {
-    return join6(
+    return join8(
       this.home,
       "kanban",
       "thread-artifacts",
@@ -53474,7 +54183,7 @@ var ThreadArtifactIndex = class {
           try {
             const serialized = JSON.stringify(row);
             if (serialized !== JSON.stringify(this.results.get(threadId))) {
-              await mkdir3(join6(this.home, "kanban", "thread-artifacts"), {
+              await mkdir3(join8(this.home, "kanban", "thread-artifacts"), {
                 recursive: true
               });
               await writeFile3(this.path(threadId), serialized, { mode: 384 });
@@ -53497,11 +54206,11 @@ var ThreadArtifactIndex = class {
 };
 
 // server/index.ts
-var uri2 = "ui://codex-taskboard/board";
 var html = readFileSync(
   fileURLToPath3(new URL("../ui/index.html", import.meta.url)),
   "utf8"
 );
+var uri2 = `ui://codex-taskboard/board-${createHash4("sha256").update(html).digest("hex").slice(0, 16)}.html`;
 var icon = "data:image/svg+xml," + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#6c7660" stroke-width="1.33"><rect x="2.5" y="3" width="15" height="14" rx="3"/><path d="M7.5 3v14M12.5 3v14M4.5 6h1M9.5 6h1M14.5 6h1M4.5 9h1M9.5 9h1"/></svg>'
 );
@@ -53546,7 +54255,10 @@ var handle = serveStdio(
       })
     );
     const snapshot = async (args = {}, opening = false) => {
-      const data = await (opening ? bridge.open(args.unreadSelection ?? null) : bridge.snapshot(args.unreadSelection ?? null));
+      const data = await (opening ? bridge.open(args.unreadSelection ?? null, args.observedThreadIds) : bridge.snapshot(
+        args.unreadSelection ?? null,
+        args.observedThreadIds
+      ));
       return {
         content: [
           {
@@ -53571,7 +54283,7 @@ var handle = serveStdio(
       {
         ...base,
         title: "\u5BF9\u8BDD\u770B\u677F",
-        description: "\u6253\u5F00\u672C\u673A Codex \u5BF9\u8BDD\u770B\u677F\uFF1B\u9996\u6B21\u81EA\u52A8\u52A0\u8F7D\u6700\u8FD1\u5341\u4E94\u6761\u5F85\u540C\u6B65\u5BF9\u8BDD\u7684\u72B6\u6001\uFF0C\u4E0D\u53D1\u9001\u6D88\u606F\u6216\u6267\u884C\u56DE\u5408\u3002",
+        description: "\u6253\u5F00\u672C\u673A Codex \u5BF9\u8BDD\u770B\u677F\uFF0C\u76F4\u63A5\u89C2\u5BDF\u5DF2\u8FD0\u884C\u684C\u9762\u7684\u5BF9\u8BDD\u72B6\u6001\uFF0C\u4E0D\u53D1\u9001\u6D88\u606F\u6216\u6267\u884C\u56DE\u5408\u3002",
         annotations: { ...base.annotations, readOnlyHint: false },
         _meta: {
           ui: { resourceUri: uri2 },
@@ -53585,7 +54297,7 @@ var handle = serveStdio(
       {
         ...base,
         title: "\u5BF9\u8BDD\u770B\u677F",
-        description: "\u5728\u5F53\u524D\u5BF9\u8BDD\u4FA7\u9762\u677F\u4E2D\u6253\u5F00\u770B\u677F\uFF0C\u9996\u6B21\u81EA\u52A8\u52A0\u8F7D\u6700\u8FD1\u5341\u4E94\u6761\u5F85\u540C\u6B65\u5BF9\u8BDD\u7684\u72B6\u6001\u3002",
+        description: "\u5728\u5F53\u524D\u5BF9\u8BDD\u4FA7\u9762\u677F\u4E2D\u6253\u5F00\u770B\u677F\uFF0C\u76F4\u63A5\u89C2\u5BDF\u5DF2\u8FD0\u884C\u684C\u9762\u7684\u5BF9\u8BDD\u72B6\u6001\u3002",
         annotations: { ...base.annotations, readOnlyHint: false },
         _meta: {
           ui: { resourceUri: uri2, visibility: ["app"] },
@@ -53599,7 +54311,8 @@ var handle = serveStdio(
       {
         ...base,
         inputSchema: external_exports.object({
-          unreadSelection: external_exports.string().max(400).nullable().optional()
+          unreadSelection: external_exports.string().max(400).nullable().optional(),
+          observedThreadIds: external_exports.array(external_exports.string().min(1).max(200)).max(500).optional()
         }),
         title: "\u5237\u65B0\u770B\u677F",
         description: "\u53EA\u8BFB\u83B7\u53D6\u672C\u5730\u5BF9\u8BDD\u72B6\u6001\u5FEB\u7167\uFF1B\u53EF\u6307\u5B9A\u7528\u6237\u9009\u4E2D\u7684\u672A\u8BFB\u6765\u6E90\uFF0C\u4E0D\u6267\u884C\u4EFB\u52A1\u3001\u4E0D\u56DE\u7B54\u5BA1\u6279\u3001\u4E0D\u4FEE\u6539\u5DF2\u8BFB\u72B6\u6001\u3002",
@@ -53617,6 +54330,25 @@ var handle = serveStdio(
       ],
       structuredContent: data
     });
+    server.registerTool(
+      "taskboard_confirmation_reply",
+      {
+        ...base,
+        inputSchema: confirmationReplyInput,
+        title: "\u63D0\u4EA4\u770B\u677F\u786E\u8BA4",
+        description: "\u4EC5\u4F9B\u770B\u677F\u754C\u9762\u63D0\u4EA4\u7528\u6237\u660E\u786E\u9009\u62E9\u7684\u539F\u751F\u786E\u8BA4\u7ED3\u679C\uFF0C\u53EF\u80FD\u5141\u8BB8\u547D\u4EE4\u6267\u884C\u6216\u6587\u4EF6\u4FEE\u6539\u3002",
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: true,
+          openWorldHint: true
+        },
+        _meta: appMeta
+      },
+      async (input2) => ({
+        content: [{ type: "text", text: "\u786E\u8BA4\u7ED3\u679C\u5DF2\u63D0\u4EA4\u3002" }],
+        structuredContent: await bridge.replyToConfirmation(input2)
+      })
+    );
     server.registerTool(
       "taskboard_artifact_rules",
       {

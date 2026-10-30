@@ -7,7 +7,10 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { WorkspaceStore } from "../server/work-items.js";
 import type { WorkItemInput } from "../shared/work-items.js";
-import { workItemIcons } from "../shared/work-item-icons.js";
+import {
+  workItemIconColors,
+  workItemIcons,
+} from "../shared/work-item-icons.js";
 
 const threadId = "a0000000-0000-4000-8000-000000000001";
 const input: WorkItemInput = {
@@ -122,7 +125,11 @@ test("legacy work items get a stable icon without rewriting their stored record"
   );
   try {
     const store = new WorkspaceStore(home);
-    const { icon: _icon, ...legacy } = store.save(input).item;
+    const {
+      icon: _icon,
+      iconColor: _color,
+      ...legacy
+    } = store.save(input).item;
     const database = new DatabaseSync(store.path);
     try {
       database
@@ -130,6 +137,9 @@ test("legacy work items get a stable icon without rewriting their stored record"
         .run(JSON.stringify(legacy), legacy.id);
       const first = store.read().items[0];
       assert.ok(first.icon && workItemIcons.includes(first.icon));
+      assert.ok(
+        first.iconColor && workItemIconColors.includes(first.iconColor),
+      );
       assert.deepEqual(new WorkspaceStore(home).read().items, [first]);
       const row = database
         .prepare("SELECT data FROM work_items WHERE id = ?")
@@ -140,6 +150,41 @@ test("legacy work items get a stable icon without rewriting their stored record"
     } finally {
       database.close();
     }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test("expanded icons and manual colors persist across reloads, edits and associations", async () => {
+  const home = await mkdtemp(join(tmpdir(), "taskboard-work-item-colors-"));
+  try {
+    const store = new WorkspaceStore(home);
+    const created = store.save({ ...input, icon: "coffee" }).item;
+    assert.equal(created.icon, "coffee");
+    assert.ok(
+      created.iconColor && workItemIconColors.includes(created.iconColor),
+    );
+    const selected = store.save({ ...created, iconColor: "pink" }).item;
+    assert.equal(new WorkspaceStore(home).read().items[0].iconColor, "pink");
+    const { iconColor: _color, ...olderInput } = selected;
+    const updated = store.save({
+      ...olderInput,
+      description: "保留所选配色",
+    }).item;
+    assert.equal(updated.iconColor, "pink");
+    const linked = store.addThread(
+      updated.id,
+      "a0000000-0000-4000-8000-000000000002",
+    );
+    assert.equal(linked.item.icon, "coffee");
+    assert.equal(linked.item.iconColor, "pink");
+    assert.throws(() =>
+      store.save({
+        ...linked.item,
+        iconColor: "unknown",
+      } as unknown as WorkItemInput),
+    );
+    assert.deepEqual(store.read().items, linked.items);
   } finally {
     await rm(home, { recursive: true, force: true });
   }

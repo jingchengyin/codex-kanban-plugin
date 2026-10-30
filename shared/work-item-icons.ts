@@ -16,6 +16,54 @@ export const workItemIcons = [
   "compass",
   "zap",
   "flag",
+  "terminal",
+  "git-branch",
+  "git-pull-request",
+  "git-commit",
+  "cpu",
+  "workflow",
+  "network",
+  "cloud",
+  "server",
+  "hard-drive",
+  "container",
+  "boxes",
+  "globe",
+  "search",
+  "scan",
+  "filter",
+  "settings",
+  "sliders",
+  "timer",
+  "clock",
+  "calendar",
+  "checklist",
+  "check-circle",
+  "circle-dot",
+  "milestone",
+  "list-todo",
+  "briefcase",
+  "building",
+  "users",
+  "user",
+  "messages",
+  "mail",
+  "bell",
+  "megaphone",
+  "pen-tool",
+  "paintbrush",
+  "image",
+  "camera",
+  "video",
+  "music",
+  "headphones",
+  "heart",
+  "star",
+  "sparkles",
+  "trophy",
+  "gem",
+  "leaf",
+  "coffee",
 ] as const;
 
 export type WorkItemIconName = (typeof workItemIcons)[number];
@@ -34,5 +82,37 @@ export function resolveWorkItemIcon(item: {
   let hash = 0;
   for (const character of item.id ?? "")
     hash = (hash * 31 + character.charCodeAt(0)) >>> 0;
-  return workItemIcons[hash % workItemIcons.length];
+  // 旧记录沿用最初 16 个图标，扩充图标库时不改变已有分配。
+  return workItemIcons[hash % 16];
+}
+
+/** 图标颜色使用受控名称，深浅色主题分别提供对应色值。 */
+export const workItemIconColors = [
+  "blue",
+  "violet",
+  "pink",
+  "red",
+  "orange",
+  "amber",
+  "green",
+  "teal",
+  "cyan",
+  "slate",
+] as const;
+
+export type WorkItemIconColor = (typeof workItemIconColors)[number];
+
+/** 未手动选色时按图标提供默认配色，旧事项也能直接显示彩色图标。 */
+export function resolveWorkItemIconColor(item: {
+  id?: string;
+  icon?: WorkItemIconName;
+  iconColor?: WorkItemIconColor;
+}): WorkItemIconColor {
+  return (
+    item.iconColor ??
+    workItemIconColors[
+      workItemIcons.indexOf(resolveWorkItemIcon(item)) %
+        workItemIconColors.length
+    ]
+  );
 }

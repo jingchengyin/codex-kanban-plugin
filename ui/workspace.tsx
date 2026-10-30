@@ -21,6 +21,7 @@ import type { WorkReview, WorkSummary } from "../shared/work-review";
 import {
   randomWorkItemIcon,
   resolveWorkItemIcon,
+  resolveWorkItemIconColor,
 } from "../shared/work-item-icons";
 import {
   deleteWorkItem,
@@ -55,15 +56,20 @@ const runtimeLabels = {
   error: "执行异常",
   unknown: "状态待同步",
 } as const;
-const blankItem = (): WorkItemInput => ({
-  title: "",
-  icon: randomWorkItemIcon(),
-  description: "",
-  status: "planned",
-  threadIds: [],
-  checklist: [],
-  links: [],
-});
+/** 新事项一次确定图标和配色，后续自动保存沿用同一组选择。 */
+const blankItem = (): WorkItemInput => {
+  const icon = randomWorkItemIcon();
+  return {
+    title: "",
+    icon,
+    iconColor: resolveWorkItemIconColor({ icon }),
+    description: "",
+    status: "planned",
+    threadIds: [],
+    checklist: [],
+    links: [],
+  };
+};
 const emptyDiscovery: ArtifactDiscovery = {
   artifacts: [],
   unavailableThreadIds: [],
@@ -456,6 +462,7 @@ export function WorkItems({
                     <h2 className="work-item-title">
                       <WorkItemIcon
                         icon={item.icon}
+                        color={item.iconColor}
                         itemId={item.id}
                         size={18}
                       />
@@ -715,7 +722,9 @@ function ItemEditor({
         <fieldset className="editor-fields">
           <WorkItemIconPicker
             value={resolveWorkItemIcon(draft)}
+            color={draft.iconColor}
             onChange={(icon) => update({ icon })}
+            onColorChange={(iconColor) => update({ iconColor })}
           />
           <label>
             {t("事项名称")}

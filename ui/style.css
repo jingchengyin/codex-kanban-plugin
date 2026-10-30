@@ -332,14 +332,45 @@ input {
   scrollbar-color: var(--line) transparent;
 }
 .lane {
+  /* 复用状态色区分列和卡片，混合宿主底色以适配深浅主题。 */
+  --muted: color-mix(
+    in srgb,
+    var(--color-text-secondary, var(--fallback-muted)) 85%,
+    var(--ink)
+  );
+  --lane-accent: var(--muted);
+  --lane-background: color-mix(in srgb, var(--lane-accent) 6%, var(--surface));
+  --lane-card-background: color-mix(
+    in srgb,
+    var(--lane-accent) 12%,
+    var(--surface)
+  );
+  --lane-card-border: color-mix(
+    in srgb,
+    var(--lane-accent) 20%,
+    var(--lane-card-background)
+  );
   min-width: 0;
   display: flex;
   flex-direction: column;
-  background: var(--soft);
-  border: 1px solid var(--line);
+  background: var(--lane-background);
+  border: 1px solid
+    color-mix(in srgb, var(--lane-accent) 10%, var(--lane-background));
   border-radius: 10px;
   padding: 13px 10px 10px;
   overflow: hidden;
+}
+.lane--amber {
+  --lane-accent: var(--amber);
+}
+.lane--green {
+  --lane-accent: var(--green);
+}
+.lane--blue {
+  --lane-accent: var(--blue);
+}
+.lane--red {
+  --lane-accent: var(--red);
 }
 .lane-heading {
   display: flex;
@@ -364,8 +395,8 @@ input {
   min-width: 19px;
   padding: 2px 5px;
   border-radius: 4px;
-  background: color-mix(in srgb, var(--ink) 7%, transparent);
-  color: var(--muted);
+  background: color-mix(in srgb, var(--lane-accent) 16%, transparent);
+  color: var(--ink);
   font-size: 10px;
   text-align: center;
   font-variant-numeric: tabular-nums;
@@ -387,10 +418,12 @@ input {
   width: 100%;
   min-width: 0;
   text-align: left;
-  background: var(--surface);
-  border: 1px solid var(--line);
+  background: var(--lane-card-background, var(--surface));
+  border: 1px solid var(--lane-card-border, var(--line));
   border-radius: 8px;
-  transition: border-color 0.15s;
+  transition:
+    border-color 0.15s,
+    background-color 0.15s;
 }
 .thread-card-open {
   display: block;
@@ -521,7 +554,11 @@ input {
 }
 .thread-card:hover {
   border-color: var(--muted);
-  background: color-mix(in srgb, var(--ink) 3%, var(--surface));
+  background: color-mix(
+    in srgb,
+    var(--ink) 3%,
+    var(--lane-card-background, var(--surface))
+  );
 }
 .card-top {
   display: flex;
@@ -675,7 +712,7 @@ input {
   min-height: 220px;
   gap: 9px;
   padding: 18px 10px;
-  border: 1px dashed var(--line);
+  border: 1px dashed var(--lane-card-border, var(--line));
   border-radius: 7px;
   text-align: center;
   color: var(--muted);

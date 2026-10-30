@@ -26,11 +26,21 @@
   max-width: 100%;
   min-height: 28px;
   padding: 5px 8px;
-  border-radius: 5px;
-  background: var(--soft);
-  color: var(--ink);
+  border: 1px solid
+    color-mix(in srgb, var(--work-item-tag-color) 24%, var(--surface));
+  border-radius: 6px;
+  /* 同色浅底跟随深浅主题，图标保留原色以保持清晰。 */
+  background: color-mix(
+    in srgb,
+    var(--work-item-tag-color) 12%,
+    var(--surface)
+  );
+  color: color-mix(in srgb, var(--work-item-tag-color) 60%, var(--ink));
   font-size: 11px;
-  transition: color 160ms;
+  transition:
+    background-color 160ms,
+    border-color 160ms,
+    color 160ms;
 }
 .thread-work-item-tag > span {
   min-width: 0;
@@ -39,7 +49,21 @@
   white-space: nowrap;
 }
 .thread-work-item-tag:hover {
-  color: var(--blue);
+  background: color-mix(
+    in srgb,
+    var(--work-item-tag-color) 18%,
+    var(--surface)
+  );
+  border-color: color-mix(
+    in srgb,
+    var(--work-item-tag-color) 36%,
+    var(--surface)
+  );
+}
+@media (prefers-reduced-motion: reduce) {
+  .thread-work-item-tag {
+    transition: none;
+  }
 }
 .thread-work-item-dialog {
   width: min(440px, calc(100vw - 32px));

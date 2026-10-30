@@ -1,6 +1,10 @@
 import { homedir } from "node:os";
-import { basename } from "node:path";
+import { basename, join } from "node:path";
 import { readLocalData } from "./local-data.js";
+import { DesktopIpc, type DesktopConversation } from "./desktop-ipc.js";
+import { DesktopConfirmations } from "./desktop-confirmations.js";
+import { readConfirmations, replyToConfirmation } from "./confirmations.js";
+import type { ConfirmationReply } from "../shared/confirmations.js";
 import {
   hasUnansweredInput,
   inputState,
@@ -34,6 +38,9 @@ export function localEndpoint(value: string): string {
 }
 /** 同步本机对话运行状态和待答标记，首次打开时加载最近的待同步对话。 */
 export class StatusBridge {
+  private desktop?: DesktopIpc;
+  private desktopConfirmations?: DesktopConfirmations;
+  private observationLease?: ReturnType<typeof setTimeout>;
   private socket?: WebSocket;
   private stopped = false;
   private retry?: ReturnType<typeof setTimeout>;
@@ -77,29 +84,141 @@ export class StatusBridge {
   readonly home: string;
 
   constructor(options: { endpoint?: string; home?: string } = {}) {
-    this.endpoint = localEndpoint(
-      options.endpoint ??
-        process.env.TASKBOARD_WS_URL ??
-        "ws://127.0.0.1:19429",
-    );
     this.home = options.home ?? process.env.CODEX_HOME ?? `${homedir()}/.codex`;
+    const websocket = options.endpoint ?? process.env.TASKBOARD_WS_URL;
+    this.endpoint = websocket
+      ? localEndpoint(websocket)
+      : `ipc://${join(this.home, "ipc", "ipc.sock")}`;
     this.connection = {
       state: "connecting",
       endpoint: this.endpoint,
       since: null,
       message: null,
     };
+    if (!websocket) {
+      this.desktop = new DesktopIpc({
+        home: this.home,
+        onState: (state, message) => {
+          this.state(state, message ?? null);
+          if (state === "connected") this.initialSyncComplete = true;
+        },
+        onConversation: (id, value) => this.rememberDesktop(id, value),
+        onUnavailable: (id) => {
+          this.userInput.delete(id);
+          this.modes.delete(id);
+          const runtime = this.runtime.get(id);
+          if (runtime) runtime.waitingSince = null;
+          this.desktopConfirmations?.remove(id);
+        },
+      });
+      this.desktopConfirmations = new DesktopConfirmations(this.desktop);
+    }
   }
   start() {
     this.stopped = false;
-    this.connect();
+    if (this.desktop) this.desktop.start();
+    else this.connect();
   }
   stop() {
     this.stopped = true;
     clearTimeout(this.retry);
     clearInterval(this.hydration);
+    clearTimeout(this.observationLease);
+    this.desktop?.stop();
+    this.desktopConfirmations?.clear();
     this.socket?.close();
     this.failPending();
+  }
+  /** UI 心跳续租当前观察集合，宿主直接销毁面板后也会自动退订。 */
+  private observeDesktop(threadIds: string[]) {
+    if (!this.desktop) return;
+    this.desktop.watch(threadIds);
+    clearTimeout(this.observationLease);
+    if (threadIds.length) {
+      this.observationLease = setTimeout(() => this.desktop?.watch([]), 15000);
+      this.observationLease.unref();
+    }
+  }
+
+  /** 从原窗口快照恢复状态与提问，历史索引继续由本地读取提供。 */
+  private rememberDesktop(id: string, value: DesktopConversation) {
+    const state = value.state;
+    this.remember({
+      id,
+      title: state.title,
+      cwd: state.cwd,
+      source: state.source,
+      // 桌面状态使用毫秒，复用 App Server 映射前转回秒。
+      updatedAt:
+        typeof state.updatedAt === "number"
+          ? state.updatedAt / 1000
+          : undefined,
+      status: state.threadRuntimeStatus,
+    });
+    const collaboration =
+      state.latestCollaborationMode?.mode ?? state.latestCollaborationMode;
+    const goal = state.threadGoal?.status ?? "none";
+    this.modes.set(id, {
+      collaborationMode: ["plan", "default"].includes(collaboration)
+        ? collaboration
+        : null,
+      goalStatus: [
+        "active",
+        "paused",
+        "blocked",
+        "usageLimited",
+        "budgetLimited",
+        "complete",
+        "none",
+      ].includes(goal)
+        ? goal
+        : null,
+    });
+    // canonical 历史与普通 turns 使用同一批消息，保持原生异步提问的判定。
+    const turns: any[] = Array.isArray(state.turns) ? state.turns : [];
+    const history = state.turnHistory?.history;
+    const ordered: any[] = Array.isArray(history?.islands)
+      ? history.islands.flatMap((island: any) =>
+          (island.entries ?? [])
+            .map((entry: any) => history.entitiesByKey?.[entry.value])
+            .filter(Boolean),
+        )
+      : [];
+    const byId = new Map<string, any>();
+    for (const turn of [...ordered, ...turns]) {
+      const key = turn?.turnId ?? turn?.id;
+      if (typeof key !== "string") continue;
+      const previous = byId.get(key);
+      // 当前回合可能只带较短的实时尾部，按消息 ID 补全 canonical 中已有内容。
+      const items = new Map<unknown, any>();
+      for (const item of [...(previous?.items ?? []), ...(turn.items ?? [])])
+        items.set(item?.id ?? item, item);
+      byId.set(key, { ...previous, ...turn, items: [...items.values()] });
+    }
+    const nativeTurns = [...byId.values()];
+    const items = nativeTurns
+      .flatMap((turn: any) => turn.items ?? [])
+      .map((item: any) =>
+        // 桌面会把已接收的续写消息折叠为 steering，仍应视作用户已回复。
+        item?.type === "steeringUserMessage" && item.status === "accepted"
+          ? { ...item, type: "userMessage" }
+          : item,
+      );
+    const previous = this.userInput.get(id);
+    this.userInput.set(id, inputState("desktop", items));
+    const current = this.userInput.get(id)!;
+    for (const [key, question] of current.pending) {
+      const known = previous?.pending.get(key);
+      if (known) question.since = known.since;
+    }
+    const runtime = this.runtime.get(id);
+    const latestTurn: any = nativeTurns.at(-1);
+    if (runtime)
+      runtime.error =
+        latestTurn?.status === "failed"
+          ? { message: "本轮执行失败，请在原对话查看详情。", at: runtime.at }
+          : null;
+    this.desktopConfirmations?.update(id, value);
   }
   private state(state: ConnectionState, message: string | null = null) {
     this.connection = { state, endpoint: this.endpoint, since: now(), message };
@@ -449,10 +568,20 @@ export class StatusBridge {
   }
 
   /** 首次打开登记一次同步意图；连接尚未就绪时由连接完成后接续。 */
-  async open(selection: string | null = null): Promise<Snapshot> {
+  async open(
+    selection: string | null = null,
+    observedThreadIds?: string[],
+  ): Promise<Snapshot> {
     this.initialSyncRequested = true;
-    const data = await this.snapshot(selection);
-    this.beginInitialSync();
+    const data = await this.snapshot(selection, observedThreadIds);
+    if (this.desktop && observedThreadIds === undefined)
+      this.observeDesktop(
+        data.threads
+          .filter((thread) => thread.kind === "user")
+          .slice(0, 15)
+          .map((thread) => thread.id),
+      );
+    else this.beginInitialSync();
     return data;
   }
 
@@ -460,6 +589,7 @@ export class StatusBridge {
   private beginInitialSync() {
     if (
       !this.initialSyncRequested ||
+      this.desktop ||
       this.initialSync ||
       this.connection.state !== "connected"
     )
@@ -510,7 +640,11 @@ export class StatusBridge {
     }
   }
 
-  async snapshot(selection: string | null = null): Promise<Snapshot> {
+  async snapshot(
+    selection: string | null = null,
+    observedThreadIds?: string[],
+  ): Promise<Snapshot> {
+    if (observedThreadIds !== undefined) this.observeDesktop(observedThreadIds);
     const cached = this.cache;
     const hit =
       cached && cached.selection === selection && Date.now() - cached.at < 1000;
@@ -532,7 +666,9 @@ export class StatusBridge {
           runtime: value.status,
           pendingUserInput: hasUnansweredInput(this.userInput.get(id)),
           runtimeAt: value.at,
-          fresh: this.connection.state === "connected",
+          fresh:
+            this.connection.state === "connected" &&
+            (!this.desktop || !!this.desktop.get(id)),
           error: value.error,
         };
         const waiting = columnFor(merged) === "waiting";
@@ -548,6 +684,38 @@ export class StatusBridge {
         });
       }
     }
+    const confirmations =
+      this.connection.state === "connected"
+        ? (this.desktopConfirmations?.read() ??
+          (await readConfirmations(this.endpoint)))
+        : { available: false, requests: [] };
+    if (this.desktop && this.connection.state === "connected")
+      for (const [id, thread] of threads) {
+        const state = this.desktop.get(id)?.state;
+        if (!state) continue;
+        const confirmation = confirmations.requests.find(
+          (request) => request.threadId === id,
+        );
+        threads.set(id, {
+          ...thread,
+          model:
+            typeof state.latestModel === "string"
+              ? state.latestModel
+              : thread.model,
+          reasoningEffort:
+            typeof state.latestReasoningEffort === "string"
+              ? state.latestReasoningEffort
+              : thread.reasoningEffort,
+          unread:
+            selection === null && typeof state.hasUnreadTurn === "boolean"
+              ? state.hasUnreadTurn
+              : thread.unread,
+          waitingQuestion:
+            thread.waitingQuestion ??
+            confirmation?.questions[0]?.question ??
+            null,
+        });
+      }
     return {
       schemaVersion: 1,
       generatedAt: now(),
@@ -556,6 +724,7 @@ export class StatusBridge {
         !this.initialSyncComplete &&
         this.connection.state !== "disconnected",
       threads: [...threads.values()].sort(compareByLastUserMessage),
+      confirmations,
       connection: { ...this.connection },
       sources: {
         metadata: local.metadata,
@@ -566,5 +735,14 @@ export class StatusBridge {
         unreadSelection: selection,
       },
     };
+  }
+
+  /** 用户提交前检查当前连接，原请求是否有效由桌面转发器最终核对。 */
+  async replyToConfirmation(input: ConfirmationReply) {
+    if (this.connection.state !== "connected")
+      throw new Error("实时状态连接已断开，请重新连接后重试。");
+    return this.desktopConfirmations
+      ? this.desktopConfirmations.reply(input)
+      : replyToConfirmation(this.endpoint, input);
   }
 }
