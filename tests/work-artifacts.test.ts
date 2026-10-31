@@ -157,6 +157,94 @@ test("final answers discover canonical MR/PR URLs, preserve labels, and ignore u
     assert.deepEqual(await reader.read(home, [first]), result);
   }));
 
+// 公有平台和自托管平台共用内建路径规则，不依赖用户配置前缀。
+for (const { platform, url, tab, fallback } of [
+  {
+    platform: "GitHub",
+    url: "https://github.com/team/repo/pull/7",
+    tab: "files",
+    fallback: "repo · PR #7",
+  },
+  {
+    platform: "GitLab",
+    url: "https://gitlab.com/group/subgroup/repo/-/merge_requests/12",
+    tab: "diffs",
+    fallback: "repo · MR !12",
+  },
+  {
+    platform: "GitHub Enterprise",
+    url: "https://github.example.com/team/repo/pull/7",
+    tab: "files",
+    fallback: "repo · PR #7",
+  },
+  {
+    platform: "self-hosted GitLab",
+    url: "https://git.example.com/group/subgroup/repo/-/merge_requests/12",
+    tab: "diffs",
+    fallback: "repo · MR !12",
+  },
+]) {
+  for (const markdown of [true, false]) {
+    test(`${platform} ${markdown ? "Markdown" : "bare"} deliverables normalize and deduplicate without custom prefixes`, () =>
+      fixture(async (home, path) => {
+        const label = `${platform} 变更`;
+        const target = `${url}/${tab}?view=inline#changes`;
+        await writeFile(
+          path,
+          final(
+            [
+              markdown ? `[${label}](${target})，已完成。` : `${target}。`,
+              `${url}/commits?from=board#latest`,
+              url,
+            ].join("\n"),
+          ),
+        );
+        const reader = new WorkArtifactReader();
+        const result = await reader.read(home, [first], { urlPrefixes: [] });
+        assert.deepEqual(urls(result), [url]);
+        assert.equal(result.artifacts.length, 1);
+        assert.equal(result.artifacts[0].label, markdown ? label : fallback);
+        assert.deepEqual(result.unavailableThreadIds, []);
+        assert.deepEqual(
+          await new WorkArtifactReader().read(home, [first]),
+          result,
+        );
+      }));
+  }
+}
+
+test("built-in GitHub and GitLab deliverables coexist with local and plan-mode documents", () =>
+  fixture(async (home, path, cwd) => {
+    const localPlan = join(cwd, "design.md");
+    const nativeContent = "# 计划模式方案\n\n保留原有方案识别。";
+    await writeFile(localPlan, "# 本地方案\n");
+    await writeFile(
+      path,
+      final(
+        [
+          "[GitHub PR](https://github.com/team/repo/pull/7/files)",
+          "https://gitlab.com/group/subgroup/repo/-/merge_requests/12/diffs",
+          "[本地方案](design.md)",
+          proposed(nativeContent),
+        ].join("\n"),
+      ),
+    );
+    const result = await new WorkArtifactReader().read(home, [first], {
+      urlPrefixes: [],
+    });
+    assert.deepEqual(urls(result), [
+      "https://github.com/team/repo/pull/7",
+      "https://gitlab.com/group/subgroup/repo/-/merge_requests/12",
+    ]);
+    assert.equal(result.artifacts.length, 4);
+    assert.ok(paths(result).includes(localPlan));
+    const native = result.artifacts.find(
+      (artifact) => artifact.label === "计划模式方案",
+    );
+    assert.ok(native?.kind === "planFile");
+    assert.equal(await readFile(native.path, "utf8"), `${nativeContent}\n`);
+  }));
+
 test("configured prefixes recognize final document links with labels and path boundaries while preserving MR precedence", () =>
   fixture(async (home, path) => {
     const prefix = "https://bytedance.sg.larkoffice.com/docx";

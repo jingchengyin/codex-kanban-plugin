@@ -1,4 +1,4 @@
-# Codex Kanban Plugin · 对话看板
+# Codex-Kanban-Plugin · 对话看板
 
 [English](README.md) | [简体中文](README.zh.md)
 
@@ -25,16 +25,30 @@
 | Git 引用 | `main`                             |
 | 稀疏路径 | 留空                               |
 
-添加市场后，在 **Codex Kanban Plugin** 中安装「对话看板」。
+添加市场后，安装 **Codex-Kanban-Plugin**。
 
-也可以通过 CLI 安装：
+也可以通过 CLI 手动安装。首次安装需按顺序执行两条命令；如果已添加过市场，只需执行第二条：
 
 ```sh
+# 添加插件市场
 codex plugin marketplace add jingchengyin/codex-kanban-plugin --ref main
+
+# 安装市场中的插件
 codex plugin add codex-kanban-plugin@codex-kanban-plugin
 ```
 
-Codex 安装插件时必须指定市场（`@市场名` 或 `-m 市场名`）。本插件和市场均命名为 `codex-kanban-plugin`。
+安装参数的格式是 `插件名@市场名`，也可用 `-m 市场名` 指定市场。本插件和市场均命名为 `codex-kanban-plugin`。
+
+### 更新
+
+如果按上面的方式添加了 Git 市场，运行：
+
+```sh
+# 拉取 main 分支的最新内容，并更新已安装的插件
+codex plugin marketplace upgrade codex-kanban-plugin
+```
+
+更新会沿用添加市场时指定的 Git 引用，上面的示例为 `main`。这条命令也会更新已安装的插件，无需卸载或再次执行 `plugin add`。更新完成后，关闭已打开的看板，再重新打开。
 
 ### 接入实时状态
 

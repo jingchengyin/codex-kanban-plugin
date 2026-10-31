@@ -1,8 +1,8 @@
-/** 看板可直接处理的原生确认请求；ID 只在当前桌面连接内有效。 */
+/** 看板可直接处理的确认请求与异步问题；ID 只在当前桌面连接内有效。 */
 export type Confirmation = {
   id: string;
   threadId: string;
-  kind: "command" | "fileChange" | "userInput";
+  kind: "command" | "fileChange" | "userInput" | "asyncUserInput";
   reason: string | null;
   command: string | null;
   cwd: string | null;

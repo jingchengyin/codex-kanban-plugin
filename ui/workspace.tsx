@@ -25,7 +25,6 @@ import {
 } from "../shared/work-item-icons";
 import {
   deleteWorkItem,
-  openArtifactLink,
   openConversation,
   readWorkReview,
   readWorkspace,
@@ -539,31 +538,9 @@ export function WorkItems({
                       )}
                     </div>
                   )}
-                  {item.links.length > 0 && (
-                    <div className="work-artifacts">
-                      {item.links.map((link, index) => (
-                        <a
-                          key={`${link.url}-${index}`}
-                          href={link.url}
-                          onClick={(event) => {
-                            event.preventDefault();
-                            void openArtifactLink(link.url).catch((reason) =>
-                              setError(
-                                reason instanceof Error
-                                  ? reason.message
-                                  : "无法打开成果链接",
-                              ),
-                            );
-                          }}
-                        >
-                          <ExternalLink size={12} />
-                          {link.label || link.url}
-                        </a>
-                      ))}
-                    </div>
-                  )}
                   <DetectedArtifacts
                     artifacts={itemArtifacts(discovery, item)}
+                    links={item.links}
                     threads={threads}
                     onError={setError}
                   />
@@ -902,7 +879,9 @@ function ItemEditor({
               )}
             </h3>
             <p className="workspace-hint">
-              {t("从关联对话的最终答复中识别 MR、PR 和本机方案文件。")}
+              {t(
+                "从关联对话的最终答复中识别 GitHub PR、GitLab MR、计划模式文档和本地方案文件。",
+              )}
             </p>
             <DetectedArtifacts
               artifacts={artifacts}

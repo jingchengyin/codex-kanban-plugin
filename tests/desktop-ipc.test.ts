@@ -348,9 +348,41 @@ test("explicit confirmation actions route to the current owner and preserve resp
     });
     await rejected;
     await assert.rejects(
-      f.client.requestOwner(thread, "thread-follower-start-turn", {}),
+      f.client.requestOwner(thread, "thread-follower-run-command", {}),
       /暂不支持/,
     );
+  } finally {
+    await f.close();
+  }
+});
+
+test("async answers route start and steer to the original owner with their native protocol versions", async () => {
+  const f = await fixture();
+  try {
+    await f.ready();
+    f.snapshot({ requests: [], threadRuntimeStatus: { type: "idle" } });
+    await until(() => !!f.client.get(thread));
+    for (const [method, version] of [
+      ["thread-follower-start-turn", 2],
+      ["thread-follower-steer-turn", 1],
+    ] as const) {
+      const params = { conversationId: thread, input: [] };
+      const action = f.client.requestOwner(thread, method, params);
+      await until(() =>
+        f.messages.some((message) => message.method === method),
+      );
+      const request = f.messages.find((message) => message.method === method);
+      assert.equal(request.targetClientId, owner);
+      assert.equal(request.version, version);
+      assert.deepEqual(request.params, params);
+      f.send({
+        type: "response",
+        requestId: request.requestId,
+        resultType: "success",
+        result: { ok: true },
+      });
+      assert.deepEqual(await action, { ok: true });
+    }
   } finally {
     await f.close();
   }

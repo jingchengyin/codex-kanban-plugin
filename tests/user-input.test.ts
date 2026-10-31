@@ -17,6 +17,18 @@ const message = {
 };
 const nextQuestion = { ...question, id: "next-question" };
 
+/** 使用桌面原生的逐题标识和回传正文，不连接真实对话。 */
+const questionId = (index: number, itemId = question.id) =>
+  JSON.stringify(["request_user_input_async", itemId, index]);
+const replyText = (indices: number[], itemId = question.id) => {
+  const replies = indices.map((index) => ({
+    questionItemId: questionId(index, itemId),
+    question: question.questions[index].title,
+    answer: "PRIVATE_ANSWER",
+  }));
+  return `<send_user_message_question_reply>\n${JSON.stringify(indices.length === 1 ? replies[0] : replies)}\n</send_user_message_question_reply>`;
+};
+
 test("only messages after a question resolve it, and later questions need input again", () => {
   for (const [items, expected] of [
     [[question], true],
@@ -30,25 +42,11 @@ test("only messages after a question resolve it, and later questions need input 
   assert.equal(hasUnansweredInput(undefined), false);
 });
 
-test("any user message resolves all earlier questions without retaining its content", () => {
+test("ordinary user messages resolve all earlier questions without retaining their content", () => {
   for (const content of [
     message.content,
     [{ type: "image", url: "PRIVATE_IMAGE" }],
     [...message.content, { type: "localImage", path: "PRIVATE_PATH" }],
-    [
-      {
-        type: "text",
-        text: `<send_user_message_question_reply>${JSON.stringify({
-          questionItemId: JSON.stringify([
-            "request_user_input_async",
-            question.id,
-            0,
-          ]),
-          question: "PRIVATE_QUESTION",
-          answer: "PRIVATE_ANSWER",
-        })}</send_user_message_question_reply>`,
-      },
-    ],
   ]) {
     const userMessage = { type: "userMessage", content };
     const pending = inputState("turn", [question]);
@@ -72,6 +70,144 @@ test("any user message resolves all earlier questions without retaining its cont
       false,
     );
   }
+});
+
+test("a structured reply resolves only its question and preserves other pending questions", () => {
+  const pending = inputState("turn", [question]);
+  const second = pending.pending.get(questionId(1))!;
+  const reply = {
+    type: "userMessage",
+    content: [{ type: "text", text: replyText([0]) }],
+  };
+  for (const state of [
+    inputState("turn", [reply], pending),
+    inputState("turn", [question, reply]),
+  ]) {
+    assert.equal(hasUnansweredInput(state), true);
+    assert.deepEqual([...state.answered], [questionId(0)]);
+    assert.deepEqual([...state.pending.keys()], [questionId(1)]);
+    assert.equal(unansweredInput(state)?.summary, "PRIVATE_QUESTION_2");
+    assert.equal(
+      JSON.stringify([...state.pending, ...state.answered]).includes(
+        "PRIVATE_ANSWER",
+      ),
+      false,
+    );
+    const repeated = inputState("turn", [question], state);
+    assert.deepEqual([...repeated.pending.keys()], [questionId(1)]);
+  }
+  const resolved = inputState("turn", [reply], pending);
+  assert.equal(resolved.pending.get(questionId(1)), second);
+  assert.equal(unansweredInput(resolved)?.since, second.since);
+  assert.equal(inputState("turn", [reply], resolved), resolved);
+});
+
+test("batch replies resolve the named questions without clearing other question cards", () => {
+  const pending = inputState("turn", [question, nextQuestion]);
+  const reply = {
+    type: "userMessage",
+    content: [{ type: "text", text: replyText([0, 1]) }],
+  };
+  const resolved = inputState("turn", [reply], pending);
+  assert.deepEqual([...resolved.answered], [questionId(0), questionId(1)]);
+  assert.deepEqual(
+    [...resolved.pending.keys()],
+    [questionId(0, nextQuestion.id), questionId(1, nextQuestion.id)],
+  );
+  assert.equal(hasUnansweredInput(resolved), true);
+  const completed = inputState(
+    "turn",
+    [
+      {
+        type: "userMessage",
+        content: [{ type: "text", text: replyText([0, 1], nextQuestion.id) }],
+      },
+    ],
+    resolved,
+  );
+  assert.equal(hasUnansweredInput(completed), false);
+  assert.equal(unansweredInput(completed), null);
+  assert.equal(completed.pending.size, 0);
+  assert.equal(
+    JSON.stringify([...completed.answered]).includes("PRIVATE_ANSWER"),
+    false,
+  );
+});
+
+test("structured replies work in user content and accepted steering input", () => {
+  for (const reply of [
+    {
+      type: "userMessage",
+      content: [{ type: "input_text", text: replyText([0]) }],
+    },
+    {
+      type: "steeringUserMessage",
+      status: "accepted",
+      input: [{ type: "text", text: replyText([0]) }],
+    },
+    {
+      type: "steeringUserMessage",
+      status: "accepted",
+      input: [{ type: "input_text", text: replyText([0]) }],
+    },
+  ]) {
+    const resolved = inputState("turn", [question, reply]);
+    assert.deepEqual([...resolved.answered], [questionId(0)]);
+    assert.deepEqual([...resolved.pending.keys()], [questionId(1)]);
+  }
+});
+
+test("pending and rejected steering messages cannot resolve a question", () => {
+  const pending = inputState("turn", [question]);
+  for (const status of ["pending", "rejected"]) {
+    for (const text of [replyText([0, 1]), "PRIVATE_USER_INPUT"]) {
+      const state = inputState(
+        "turn",
+        [
+          {
+            type: "steeringUserMessage",
+            status,
+            input: [{ type: "text", text }],
+          },
+        ],
+        pending,
+      );
+      assert.equal(state, pending);
+      assert.equal(state.pending.size, 2);
+      assert.equal(state.answered.size, 0);
+    }
+  }
+  const accepted = inputState(
+    "turn",
+    [
+      {
+        type: "steeringUserMessage",
+        status: "accepted",
+        input: [{ type: "text", text: "PRIVATE_USER_INPUT" }],
+      },
+    ],
+    pending,
+  );
+  assert.equal(hasUnansweredInput(accepted), false);
+});
+
+test("a structured reply for an unrelated item leaves the pending questions intact", () => {
+  const pending = inputState("turn", [question]);
+  const resolved = inputState(
+    "turn",
+    [
+      {
+        type: "userMessage",
+        content: [{ type: "text", text: replyText([0], "unrelated-item") }],
+      },
+    ],
+    pending,
+  );
+  assert.deepEqual([...resolved.pending.keys()], [...pending.pending.keys()]);
+  assert.equal(
+    unansweredInput(resolved)?.since,
+    unansweredInput(pending)?.since,
+  );
 });
 
 test("pending summaries use question text, normalize whitespace and never include surrounding messages", () => {

@@ -26,6 +26,8 @@ const ownerMethods = new Set([
   "thread-follower-permissions-request-approval-response",
   "thread-follower-submit-user-input",
   "thread-follower-submit-mcp-server-elicitation-response",
+  "thread-follower-start-turn",
+  "thread-follower-steer-turn",
 ]);
 
 /** 观察桌面已有对话，保持原窗口拥有运行态及确认请求。 */
@@ -187,7 +189,12 @@ export class DesktopIpc {
           type: "request",
           requestId,
           sourceClientId: this.clientId ?? "initializing-client",
-          version: method === "initialize" ? 0 : 1,
+          version:
+            method === "initialize"
+              ? 0
+              : method === "thread-follower-start-turn"
+                ? 2
+                : 1,
           method,
           params,
           ...(ownerClientId ? { targetClientId: ownerClientId } : {}),

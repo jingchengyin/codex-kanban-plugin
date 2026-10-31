@@ -7,6 +7,7 @@ import type {
 } from "../shared/confirmations.js";
 import { confirmationReplyInput } from "./confirmations.js";
 import type { DesktopConversation, DesktopIpc } from "./desktop-ipc.js";
+import { desktopTurns, inputState } from "./user-input.js";
 
 type Pending = {
   owner: string;
@@ -19,9 +20,52 @@ const supported = {
   "item/commandExecution/requestApproval": "command",
   "item/fileChange/requestApproval": "fileChange",
   "item/tool/requestUserInput": "userInput",
+  request_user_input_async: "asyncUserInput",
 } as const;
 const stale = () => new Error("该请求已处理或已失效，请刷新看板。");
 const text = (value: unknown) => (typeof value === "string" ? value : null);
+
+/** 把尚未回答的异步问题合为一张卡，回传时保留桌面的逐题标识。 */
+function asyncRequest(threadId: string, state: any) {
+  const items = desktopTurns(state).flatMap((turn) => turn.items ?? []);
+  const pending = inputState("desktop", items).pending;
+  if (!pending.size) return null;
+  const questions = [];
+  for (const item of items) {
+    if (item?.type !== "agentMessage" || !Array.isArray(item.questions))
+      continue;
+    for (const [index, question] of item.questions.entries()) {
+      const id = JSON.stringify(["request_user_input_async", item.id, index]);
+      if (!pending.has(id)) continue;
+      if (
+        typeof question?.title !== "string" ||
+        !question.title.trim() ||
+        (question.options != null &&
+          (!Array.isArray(question.options) ||
+            question.options.some(
+              (option: unknown) => typeof option !== "string",
+            )))
+      )
+        return null;
+      questions.push({
+        id,
+        question: question.title,
+        isOther: true,
+        options: (question.options ?? []).map((label: string) => ({
+          label,
+          description: "",
+        })),
+      });
+    }
+  }
+  if (!questions.length) return null;
+  // 该对象只用于复用卡片生命周期，不作为原生 RPC 请求发送。
+  return {
+    id: "async-questions",
+    method: "request_user_input_async",
+    params: { threadId, questions },
+  };
+}
 
 /** 从桌面已有历史中取文件预览，兼容普通 turns 和新版 canonical 历史。 */
 function fileChanges(state: any, params: any): any[] | undefined {
@@ -55,6 +99,7 @@ function describe(
 ): Omit<Confirmation, "id"> | null {
   const kind = supported[raw?.method as keyof typeof supported];
   const params = raw?.params;
+  const userInput = kind === "userInput" || kind === "asyncUserInput";
   if (
     !kind ||
     !["string", "number"].includes(typeof raw.id) ||
@@ -64,17 +109,16 @@ function describe(
     return null;
   const changes =
     kind === "fileChange" ? fileChanges(state, params) : undefined;
-  const decisions =
-    kind === "userInput"
-      ? []
-      : kind === "command"
-        ? (params.availableDecisions ?? ["accept", "decline", "cancel"]).filter(
-            (decision: unknown) =>
-              ["accept", "decline", "cancel"].includes(decision as string),
-          )
-        : changes
-          ? ["accept", "decline", "cancel"]
-          : ["decline", "cancel"];
+  const decisions = userInput
+    ? []
+    : kind === "command"
+      ? (params.availableDecisions ?? ["accept", "decline", "cancel"]).filter(
+          (decision: unknown) =>
+            ["accept", "decline", "cancel"].includes(decision as string),
+        )
+      : changes
+        ? ["accept", "decline", "cancel"]
+        : ["decline", "cancel"];
   const details = Object.fromEntries(
     Object.entries({
       network: params.networkApprovalContext,
@@ -83,7 +127,7 @@ function describe(
     }).filter(([, value]) => value != null),
   );
   const questions =
-    kind === "userInput" && Array.isArray(params.questions)
+    userInput && Array.isArray(params.questions)
       ? params.questions.map((question: any) => ({
           id: question.id,
           question: question.question,
@@ -93,7 +137,7 @@ function describe(
         }))
       : [];
   if (
-    kind === "userInput" &&
+    userInput &&
     (!questions.length ||
       questions.some(
         (question: any) =>
@@ -120,7 +164,7 @@ function describe(
   };
 }
 
-/** 跟随桌面快照维护确认卡片，并把用户选择送回当前原连接 owner。 */
+/** 跟随桌面快照维护确认与提问卡片，并把用户回答送回当前原连接 owner。 */
 export class DesktopConfirmations {
   private threads = new Map<string, Map<string, Pending>>();
 
@@ -133,7 +177,11 @@ export class DesktopConfirmations {
   update(threadId: string, conversation: DesktopConversation) {
     const previous = this.threads.get(threadId);
     const next = new Map<string, Pending>();
-    for (const raw of conversation.state.requests ?? []) {
+    const question = asyncRequest(threadId, conversation.state);
+    for (const raw of [
+      ...(conversation.state.requests ?? []),
+      ...(question ? [question] : []),
+    ]) {
       const confirmation = describe(threadId, raw, conversation.state);
       if (!confirmation) continue;
       const key = JSON.stringify([conversation.ownerClientId, raw]);
@@ -188,12 +236,15 @@ export class DesktopConfirmations {
     if (!pending) throw stale();
     const current = this.ipc.get(parsed.threadId);
     if (!current || current.ownerClientId !== pending.owner) throw stale();
-    const params: any = {
+    let params: any = {
       conversationId: parsed.threadId,
       requestId: pending.raw.id,
     };
     let method: string;
-    if (pending.confirmation.kind === "userInput") {
+    if (
+      pending.confirmation.kind === "userInput" ||
+      pending.confirmation.kind === "asyncUserInput"
+    ) {
       if (!("answers" in parsed))
         throw new Error("确认内容无效，请检查后重试。");
       const answers = parsed.answers;
@@ -211,8 +262,65 @@ export class DesktopConfirmations {
         })
       )
         throw new Error("确认内容无效，请检查后重试。");
-      method = "thread-follower-submit-user-input";
-      params.response = { answers };
+      if (pending.confirmation.kind === "asyncUserInput") {
+        const replies = questions.map((question) => ({
+          questionItemId: question.id,
+          question: question.question,
+          answer: answers[question.id].answers[0],
+        }));
+        const prompt = `<send_user_message_question_reply>\n${JSON.stringify(replies)}\n</send_user_message_question_reply>`;
+        const clientUserMessageId = randomUUID();
+        const cwd = current.state.cwd;
+        const restoreMessage = {
+          id: clientUserMessageId,
+          text: prompt,
+          context: {
+            prompt,
+            turnTrigger: "send_user_message_async_question",
+            addedFiles: [],
+            fileAttachments: [],
+            ideContext: null,
+            imageAttachments: [],
+            workspaceRoots: typeof cwd === "string" ? [cwd] : [],
+          },
+          cwd,
+          createdAt: Date.now(),
+          responsesapiClientMetadata: { source: "codex" },
+        };
+        const input = [{ type: "text", text: prompt, text_elements: [] }];
+        // 让原窗口继承当前线程设置；运行中作为续写发送，空闲时开始下一轮。
+        if (current.state.threadRuntimeStatus?.type === "active") {
+          method = "thread-follower-steer-turn";
+          params = {
+            conversationId: parsed.threadId,
+            input,
+            restoreMessage,
+            clientUserMessageId,
+            attachments: [],
+          };
+        } else {
+          method = "thread-follower-start-turn";
+          params = {
+            conversationId: parsed.threadId,
+            turnStart: {
+              request: {
+                threadId: parsed.threadId,
+                input,
+                turnTrigger: "send_user_message_async_question",
+                clientUserMessageId,
+              },
+              context: {
+                inheritThreadSettings: true,
+                restoreMessage,
+                attachments: [],
+              },
+            },
+          };
+        }
+      } else {
+        method = "thread-follower-submit-user-input";
+        params.response = { answers };
+      }
     } else {
       if (
         !("decision" in parsed) ||
@@ -241,14 +349,23 @@ export class DesktopConfirmations {
         latest.ownerClientId !== pending.owner
       )
         throw stale();
-      if (
-        !(latest.state.requests ?? []).some(
-          (request: any) =>
-            request.id === pending.raw.id &&
-            request.method === pending.raw.method,
-        )
-      )
-        return { submitted: true };
+      const unanswered =
+        pending.confirmation.kind === "asyncUserInput"
+          ? inputState(
+              "desktop",
+              desktopTurns(latest.state).flatMap((turn) => turn.items ?? []),
+            ).pending
+          : null;
+      const stillPending = unanswered
+        ? pending.confirmation.questions.some((question) =>
+            unanswered.has(question.id),
+          )
+        : (latest.state.requests ?? []).some(
+            (request: any) =>
+              request.id === pending.raw.id &&
+              request.method === pending.raw.method,
+          );
+      if (!stillPending) return { submitted: true };
       await pause(25);
     } while (Date.now() < deadline);
     throw new Error("确认结果尚未同步，请在原对话核对，避免重复提交。");

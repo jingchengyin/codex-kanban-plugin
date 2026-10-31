@@ -51679,7 +51679,9 @@ var ownerMethods = /* @__PURE__ */ new Set([
   "thread-follower-file-approval-decision",
   "thread-follower-permissions-request-approval-response",
   "thread-follower-submit-user-input",
-  "thread-follower-submit-mcp-server-elicitation-response"
+  "thread-follower-submit-mcp-server-elicitation-response",
+  "thread-follower-start-turn",
+  "thread-follower-steer-turn"
 ]);
 var DesktopIpc = class {
   constructor(options) {
@@ -51817,7 +51819,7 @@ var DesktopIpc = class {
         type: "request",
         requestId,
         sourceClientId: this.clientId ?? "initializing-client",
-        version: method === "initialize" ? 0 : 1,
+        version: method === "initialize" ? 0 : method === "thread-follower-start-turn" ? 2 : 1,
         method,
         params,
         ...ownerClientId ? { targetClientId: ownerClientId } : {}
@@ -52013,14 +52015,140 @@ async function replyToConfirmation(endpoint, input2) {
   return { submitted: true };
 }
 
+// server/user-input.ts
+function desktopTurns(state) {
+  const turns = Array.isArray(state.turns) ? state.turns : [];
+  const history = state.turnHistory?.history;
+  const ordered = Array.isArray(history?.islands) ? history.islands.flatMap(
+    (island) => (island.entries ?? []).map((entry) => history.entitiesByKey?.[entry.value]).filter(Boolean)
+  ) : [];
+  const byId = /* @__PURE__ */ new Map();
+  for (const turn of [...ordered, ...turns]) {
+    const key = turn?.turnId ?? turn?.id;
+    if (typeof key !== "string") continue;
+    const previous = byId.get(key);
+    const items = /* @__PURE__ */ new Map();
+    for (const item of [...previous?.items ?? [], ...turn.items ?? []])
+      items.set(item?.id ?? item, item);
+    byId.set(key, { ...previous, ...turn, items: [...items.values()] });
+  }
+  return [...byId.values()];
+}
+function questionSummary(question) {
+  if (typeof question?.title !== "string") return null;
+  const text2 = question.title.replace(/\s+/g, " ").trim();
+  const characters = [...text2];
+  return characters.length > 280 ? characters.slice(0, 280).join("") + "\u2026" : text2 || null;
+}
+function repliedQuestionIds(item) {
+  const content = item.type === "steeringUserMessage" ? item.input : item.content;
+  const ids = /* @__PURE__ */ new Set();
+  for (const part of Array.isArray(content) ? content : []) {
+    if (typeof part?.text !== "string") continue;
+    const match = /^\s*<send_user_message_question_reply>\s*([\s\S]*?)\s*<\/send_user_message_question_reply>\s*$/.exec(
+      part.text
+    );
+    if (!match) continue;
+    try {
+      const value = JSON.parse(match[1]);
+      const replies = Array.isArray(value) ? value : [value];
+      if (replies.length && replies.every(
+        (reply) => typeof reply?.questionItemId === "string" && typeof reply.question === "string" && typeof reply.answer === "string"
+      ))
+        for (const reply of replies) ids.add(reply.questionItemId);
+    } catch {
+    }
+  }
+  return ids.size ? ids : null;
+}
+function inputState(turnId, items, previous) {
+  const state = {
+    turnId,
+    questions: new Set(previous?.questions),
+    answered: new Set(previous?.answered),
+    pending: new Map(previous?.pending)
+  };
+  for (const item of items) {
+    if (item?.type === "agentMessage" && typeof item.id === "string" && Array.isArray(item.questions))
+      item.questions.forEach((question, index) => {
+        const id = JSON.stringify(["request_user_input_async", item.id, index]);
+        state.questions.add(id);
+        if (state.answered.has(id)) return;
+        const known = state.pending.get(id);
+        const summary = questionSummary(question) ?? known?.summary ?? null;
+        if (!known || known.summary !== summary)
+          state.pending.set(id, {
+            summary,
+            since: known?.since ?? (/* @__PURE__ */ new Date()).toISOString()
+          });
+      });
+    if (item?.type === "userMessage" || item?.type === "steeringUserMessage" && item.status === "accepted") {
+      const answered = repliedQuestionIds(item) ?? state.questions;
+      for (const id of answered) {
+        if (!state.questions.has(id)) continue;
+        state.answered.add(id);
+        state.pending.delete(id);
+      }
+    }
+  }
+  return previous && previous.turnId === turnId && state.questions.size === previous.questions.size && state.answered.size === previous.answered.size && state.pending.size === previous.pending.size && [...state.pending].every(
+    ([id, value]) => previous.pending.get(id) === value
+  ) ? previous : state;
+}
+function unansweredInput(state) {
+  const pending = [...state?.pending.values() ?? []];
+  if (!pending.length) return null;
+  return {
+    since: pending.map((question) => question.since).sort()[0],
+    summary: pending.find((question) => question.summary)?.summary ?? null
+  };
+}
+function hasUnansweredInput(state) {
+  return !!state && [...state.questions].some((id) => !state.answered.has(id));
+}
+
 // server/desktop-confirmations.ts
 var supported = {
   "item/commandExecution/requestApproval": "command",
   "item/fileChange/requestApproval": "fileChange",
-  "item/tool/requestUserInput": "userInput"
+  "item/tool/requestUserInput": "userInput",
+  request_user_input_async: "asyncUserInput"
 };
 var stale = () => new Error("\u8BE5\u8BF7\u6C42\u5DF2\u5904\u7406\u6216\u5DF2\u5931\u6548\uFF0C\u8BF7\u5237\u65B0\u770B\u677F\u3002");
 var text = (value) => typeof value === "string" ? value : null;
+function asyncRequest(threadId, state) {
+  const items = desktopTurns(state).flatMap((turn) => turn.items ?? []);
+  const pending = inputState("desktop", items).pending;
+  if (!pending.size) return null;
+  const questions = [];
+  for (const item of items) {
+    if (item?.type !== "agentMessage" || !Array.isArray(item.questions))
+      continue;
+    for (const [index, question] of item.questions.entries()) {
+      const id = JSON.stringify(["request_user_input_async", item.id, index]);
+      if (!pending.has(id)) continue;
+      if (typeof question?.title !== "string" || !question.title.trim() || question.options != null && (!Array.isArray(question.options) || question.options.some(
+        (option) => typeof option !== "string"
+      )))
+        return null;
+      questions.push({
+        id,
+        question: question.title,
+        isOther: true,
+        options: (question.options ?? []).map((label) => ({
+          label,
+          description: ""
+        }))
+      });
+    }
+  }
+  if (!questions.length) return null;
+  return {
+    id: "async-questions",
+    method: "request_user_input_async",
+    params: { threadId, questions }
+  };
+}
 function fileChanges(state, params) {
   const turns = [
     ...Array.isArray(state.turns) ? state.turns : [],
@@ -52040,10 +52168,11 @@ function fileChanges(state, params) {
 function describe5(threadId, raw, state) {
   const kind = supported[raw?.method];
   const params = raw?.params;
+  const userInput = kind === "userInput" || kind === "asyncUserInput";
   if (!kind || !["string", "number"].includes(typeof raw.id) || params?.threadId !== threadId || kind === "command" && params.kind && params.kind !== "command")
     return null;
   const changes = kind === "fileChange" ? fileChanges(state, params) : void 0;
-  const decisions = kind === "userInput" ? [] : kind === "command" ? (params.availableDecisions ?? ["accept", "decline", "cancel"]).filter(
+  const decisions = userInput ? [] : kind === "command" ? (params.availableDecisions ?? ["accept", "decline", "cancel"]).filter(
     (decision) => ["accept", "decline", "cancel"].includes(decision)
   ) : changes ? ["accept", "decline", "cancel"] : ["decline", "cancel"];
   const details = Object.fromEntries(
@@ -52053,14 +52182,14 @@ function describe5(threadId, raw, state) {
       ...kind === "fileChange" ? { grantRoot: params.grantRoot } : {}
     }).filter(([, value]) => value != null)
   );
-  const questions = kind === "userInput" && Array.isArray(params.questions) ? params.questions.map((question) => ({
+  const questions = userInput && Array.isArray(params.questions) ? params.questions.map((question) => ({
     id: question.id,
     question: question.question,
     isSecret: question.isSecret === true,
     allowOther: question.isOther === true || !question.options?.length,
     options: question.options ?? []
   })) : [];
-  if (kind === "userInput" && (!questions.length || questions.some(
+  if (userInput && (!questions.length || questions.some(
     (question) => typeof question.id !== "string" || typeof question.question !== "string" || !Array.isArray(question.options)
   )))
     return null;
@@ -52090,7 +52219,11 @@ var DesktopConfirmations = class {
   update(threadId, conversation) {
     const previous = this.threads.get(threadId);
     const next = /* @__PURE__ */ new Map();
-    for (const raw of conversation.state.requests ?? []) {
+    const question = asyncRequest(threadId, conversation.state);
+    for (const raw of [
+      ...conversation.state.requests ?? [],
+      ...question ? [question] : []
+    ]) {
       const confirmation = describe5(threadId, raw, conversation.state);
       if (!confirmation) continue;
       const key = JSON.stringify([conversation.ownerClientId, raw]);
@@ -52139,12 +52272,12 @@ var DesktopConfirmations = class {
     if (!pending) throw stale();
     const current = this.ipc.get(parsed.threadId);
     if (!current || current.ownerClientId !== pending.owner) throw stale();
-    const params = {
+    let params = {
       conversationId: parsed.threadId,
       requestId: pending.raw.id
     };
     let method;
-    if (pending.confirmation.kind === "userInput") {
+    if (pending.confirmation.kind === "userInput" || pending.confirmation.kind === "asyncUserInput") {
       if (!("answers" in parsed))
         throw new Error("\u786E\u8BA4\u5185\u5BB9\u65E0\u6548\uFF0C\u8BF7\u68C0\u67E5\u540E\u91CD\u8BD5\u3002");
       const answers = parsed.answers;
@@ -52154,8 +52287,66 @@ var DesktopConfirmations = class {
         return typeof answer === "string" && answer.trim() && (question.allowOther || question.options.some((option) => option.label === answer));
       }))
         throw new Error("\u786E\u8BA4\u5185\u5BB9\u65E0\u6548\uFF0C\u8BF7\u68C0\u67E5\u540E\u91CD\u8BD5\u3002");
-      method = "thread-follower-submit-user-input";
-      params.response = { answers };
+      if (pending.confirmation.kind === "asyncUserInput") {
+        const replies = questions.map((question) => ({
+          questionItemId: question.id,
+          question: question.question,
+          answer: answers[question.id].answers[0]
+        }));
+        const prompt = `<send_user_message_question_reply>
+${JSON.stringify(replies)}
+</send_user_message_question_reply>`;
+        const clientUserMessageId = randomUUID2();
+        const cwd = current.state.cwd;
+        const restoreMessage = {
+          id: clientUserMessageId,
+          text: prompt,
+          context: {
+            prompt,
+            turnTrigger: "send_user_message_async_question",
+            addedFiles: [],
+            fileAttachments: [],
+            ideContext: null,
+            imageAttachments: [],
+            workspaceRoots: typeof cwd === "string" ? [cwd] : []
+          },
+          cwd,
+          createdAt: Date.now(),
+          responsesapiClientMetadata: { source: "codex" }
+        };
+        const input3 = [{ type: "text", text: prompt, text_elements: [] }];
+        if (current.state.threadRuntimeStatus?.type === "active") {
+          method = "thread-follower-steer-turn";
+          params = {
+            conversationId: parsed.threadId,
+            input: input3,
+            restoreMessage,
+            clientUserMessageId,
+            attachments: []
+          };
+        } else {
+          method = "thread-follower-start-turn";
+          params = {
+            conversationId: parsed.threadId,
+            turnStart: {
+              request: {
+                threadId: parsed.threadId,
+                input: input3,
+                turnTrigger: "send_user_message_async_question",
+                clientUserMessageId
+              },
+              context: {
+                inheritThreadSettings: true,
+                restoreMessage,
+                attachments: []
+              }
+            }
+          };
+        }
+      } else {
+        method = "thread-follower-submit-user-input";
+        params.response = { answers };
+      }
     } else {
       if (!("decision" in parsed) || !pending.confirmation.decisions.includes(parsed.decision))
         throw new Error("\u786E\u8BA4\u5185\u5BB9\u65E0\u6548\uFF0C\u8BF7\u68C0\u67E5\u540E\u91CD\u8BD5\u3002");
@@ -52173,64 +52364,21 @@ var DesktopConfirmations = class {
       const latest = this.ipc.get(parsed.threadId);
       if (!this.threads.has(parsed.threadId) || !latest || latest.ownerClientId !== pending.owner)
         throw stale();
-      if (!(latest.state.requests ?? []).some(
+      const unanswered = pending.confirmation.kind === "asyncUserInput" ? inputState(
+        "desktop",
+        desktopTurns(latest.state).flatMap((turn) => turn.items ?? [])
+      ).pending : null;
+      const stillPending = unanswered ? pending.confirmation.questions.some(
+        (question) => unanswered.has(question.id)
+      ) : (latest.state.requests ?? []).some(
         (request) => request.id === pending.raw.id && request.method === pending.raw.method
-      ))
-        return { submitted: true };
+      );
+      if (!stillPending) return { submitted: true };
       await pause(25);
     } while (Date.now() < deadline);
     throw new Error("\u786E\u8BA4\u7ED3\u679C\u5C1A\u672A\u540C\u6B65\uFF0C\u8BF7\u5728\u539F\u5BF9\u8BDD\u6838\u5BF9\uFF0C\u907F\u514D\u91CD\u590D\u63D0\u4EA4\u3002");
   }
 };
-
-// server/user-input.ts
-function questionSummary(question) {
-  if (typeof question?.title !== "string") return null;
-  const text2 = question.title.replace(/\s+/g, " ").trim();
-  const characters = [...text2];
-  return characters.length > 280 ? characters.slice(0, 280).join("") + "\u2026" : text2 || null;
-}
-function inputState(turnId, items, previous) {
-  const state = {
-    turnId,
-    questions: new Set(previous?.questions),
-    answered: new Set(previous?.answered),
-    pending: new Map(previous?.pending)
-  };
-  for (const item of items) {
-    if (item?.type === "agentMessage" && typeof item.id === "string" && Array.isArray(item.questions))
-      item.questions.forEach((question, index) => {
-        const id = JSON.stringify(["request_user_input_async", item.id, index]);
-        state.questions.add(id);
-        if (state.answered.has(id)) return;
-        const known = state.pending.get(id);
-        const summary = questionSummary(question) ?? known?.summary ?? null;
-        if (!known || known.summary !== summary)
-          state.pending.set(id, {
-            summary,
-            since: known?.since ?? (/* @__PURE__ */ new Date()).toISOString()
-          });
-      });
-    if (item?.type === "userMessage") {
-      for (const id of state.questions) state.answered.add(id);
-      state.pending.clear();
-    }
-  }
-  return previous && previous.turnId === turnId && state.questions.size === previous.questions.size && state.answered.size === previous.answered.size && state.pending.size === previous.pending.size && [...state.pending].every(
-    ([id, value]) => previous.pending.get(id) === value
-  ) ? previous : state;
-}
-function unansweredInput(state) {
-  const pending = [...state?.pending.values() ?? []];
-  if (!pending.length) return null;
-  return {
-    since: pending.map((question) => question.since).sort()[0],
-    summary: pending.find((question) => question.summary)?.summary ?? null
-  };
-}
-function hasUnansweredInput(state) {
-  return !!state && [...state.questions].some((id) => !state.answered.has(id));
-}
 
 // shared/types.ts
 function compareByLastUserMessage(a, b) {
@@ -52364,28 +52512,8 @@ var StatusBridge = class {
         "none"
       ].includes(goal) ? goal : null
     });
-    const turns = Array.isArray(state.turns) ? state.turns : [];
-    const history = state.turnHistory?.history;
-    const ordered = Array.isArray(history?.islands) ? history.islands.flatMap(
-      (island) => (island.entries ?? []).map((entry) => history.entitiesByKey?.[entry.value]).filter(Boolean)
-    ) : [];
-    const byId = /* @__PURE__ */ new Map();
-    for (const turn of [...ordered, ...turns]) {
-      const key = turn?.turnId ?? turn?.id;
-      if (typeof key !== "string") continue;
-      const previous2 = byId.get(key);
-      const items2 = /* @__PURE__ */ new Map();
-      for (const item of [...previous2?.items ?? [], ...turn.items ?? []])
-        items2.set(item?.id ?? item, item);
-      byId.set(key, { ...previous2, ...turn, items: [...items2.values()] });
-    }
-    const nativeTurns = [...byId.values()];
-    const items = nativeTurns.flatMap((turn) => turn.items ?? []).map(
-      (item) => (
-        // 桌面会把已接收的续写消息折叠为 steering，仍应视作用户已回复。
-        item?.type === "steeringUserMessage" && item.status === "accepted" ? { ...item, type: "userMessage" } : item
-      )
-    );
+    const nativeTurns = desktopTurns(state);
+    const items = nativeTurns.flatMap((turn) => turn.items ?? []);
     const previous = this.userInput.get(id);
     this.userInput.set(id, inputState("desktop", items));
     const current = this.userInput.get(id);

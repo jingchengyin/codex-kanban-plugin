@@ -3,16 +3,16 @@
   "version": "0.2.0",
   "description": "本机 Codex 工作台：对话状态、工作事项与历史用量回顾。",
   "author": {
-    "name": "Codex Kanban Plugin"
+    "name": "jingchengyin"
   },
   "license": "MIT",
   "requires_local_executor": true,
   "mcpServers": "./.mcp.json",
   "interface": {
-    "displayName": "对话看板",
+    "displayName": "Codex-Kanban-Plugin",
     "shortDescription": "A Kanban board for Codex power users to manage concurrent chats, tasks, and usage history.",
     "longDescription": "集中查看本机对话状态，关联工作事项与验收清单，并回顾历史回合用量。事项保存在插件自己的数据库中，Codex 对话数据只读访问。",
-    "developerName": "Codex Kanban Plugin",
+    "developerName": "jingchengyin",
     "category": "Developer Tools",
     "capabilities": ["Interactive", "Read", "Write"],
     "composerIcon": "./assets/icon.svg",

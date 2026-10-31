@@ -1,0 +1,100 @@
+{
+  "checkedAt": "2026-10-30T08:04:57.201Z",
+  "targetHash": "b61875b46c10",
+  "transport": "existing desktop IPC observer subscription",
+  "initialized": true,
+  "snapshotReceived": true,
+  "snapshots": [
+    {
+      "version": 11,
+      "revision": 5,
+      "stateKeys": [
+        "id",
+        "sessionId",
+        "shellEnvironmentPolicy",
+        "forkedFromId",
+        "ephemeral",
+        "sideConversation",
+        "hostId",
+        "turns",
+        "requests",
+        "createdAt",
+        "updatedAt",
+        "recencyAt",
+        "title",
+        "mode",
+        "threadStartKind",
+        "modelProvider",
+        "daybreakEnabled",
+        "daybreakProgramPropagationEnrolled",
+        "inheritedDaybreakSelection",
+        "latestThreadSettings",
+        "latestModel",
+        "latestReasoningEffort",
+        "previousTurnModel",
+        "latestCollaborationMode",
+        "hasUnreadTurn",
+        "rolloutPath",
+        "cwd",
+        "gitInfo",
+        "resumeState",
+        "latestTokenUsageInfo",
+        "currentPermissions",
+        "environments",
+        "environmentSelectionEvidence",
+        "workspaceKind",
+        "workspaceBrowserRoot",
+        "projectlessOutputDirectory",
+        "originator",
+        "source",
+        "agentNickname",
+        "threadSource",
+        "historyMode",
+        "canonicalVoiceHistory",
+        "turnHistory",
+        "turnsPagination",
+        "fallbackSearchTitle",
+        "threadRuntimeStatus",
+        "latestTurnStartMessageId",
+        "threadGoal",
+        "threadGoalResumeConfirmation",
+        "unreadMessageCount"
+      ],
+      "runtimeStatus": "active",
+      "resumeState": "resumed",
+      "requestCount": 0,
+      "requests": []
+    }
+  ],
+  "broadcasts": {
+    "thread-stream-following-changed": 6,
+    "thread-stream-state-changed": 4,
+    "query-cache-invalidate": 4,
+    "thread-queued-followups-changed": 4
+  },
+  "patchCount": 3,
+  "patchRevisions": [
+    {
+      "version": 11,
+      "baseRevision": 5,
+      "revision": 6
+    },
+    {
+      "version": 11,
+      "baseRevision": 6,
+      "revision": 7
+    },
+    {
+      "version": 11,
+      "baseRevision": 7,
+      "revision": 8
+    }
+  ],
+  "patchPaths": ["latestTokenUsageInfo", "turnHistory.history"],
+  "sentMethods": [
+    "initialize",
+    "thread-stream-following-changed",
+    "thread-stream-following-changed"
+  ],
+  "result": "snapshot_and_patches_observed"
+}

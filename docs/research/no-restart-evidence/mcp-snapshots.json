@@ -1,0 +1,81 @@
+{
+  "checkedAt": "2026-10-30T07:59:46.408Z",
+  "runtime": "/Applications/ChatGPT.app/Contents/Resources/cua_node/bin/node",
+  "samples": [
+    {
+      "elapsedMs": 1588,
+      "threadCount": 49,
+      "statusCounts": {
+        "notLoaded": 34,
+        "idle": 12,
+        "active": 3
+      },
+      "callerStatus": "active",
+      "schemaVersion": 4,
+      "fieldNames": [
+        "cwd",
+        "hostId",
+        "id",
+        "isUnread",
+        "kind",
+        "pinnedIndex",
+        "projectId",
+        "status",
+        "summary",
+        "title",
+        "updatedAt"
+      ]
+    },
+    {
+      "elapsedMs": 209,
+      "threadCount": 49,
+      "statusCounts": {
+        "notLoaded": 34,
+        "idle": 12,
+        "active": 3
+      },
+      "callerStatus": "active",
+      "schemaVersion": 4,
+      "fieldNames": [
+        "cwd",
+        "hostId",
+        "id",
+        "isUnread",
+        "kind",
+        "pinnedIndex",
+        "projectId",
+        "status",
+        "summary",
+        "title",
+        "updatedAt"
+      ]
+    },
+    {
+      "elapsedMs": 215,
+      "threadCount": 49,
+      "statusCounts": {
+        "notLoaded": 34,
+        "idle": 12,
+        "active": 3
+      },
+      "callerStatus": "active",
+      "schemaVersion": 4,
+      "fieldNames": [
+        "cwd",
+        "hostId",
+        "id",
+        "isUnread",
+        "kind",
+        "pinnedIndex",
+        "projectId",
+        "status",
+        "summary",
+        "title",
+        "updatedAt"
+      ]
+    }
+  ],
+  "notifications": {},
+  "result": "three_live_snapshots_passed",
+  "statusTools": ["list_threads", "read_thread", "wait_threads"]
+}

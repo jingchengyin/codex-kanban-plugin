@@ -5,7 +5,7 @@ import { replyToConfirmation } from "./client";
 import { useI18n } from "./i18n";
 import "./thread-confirmations.css";
 
-/** 卡片内展示原生请求，按钮独立于对话跳转区域。 */
+/** 卡片内展示原生请求和异步问题，按钮独立于对话跳转区域。 */
 export function ThreadConfirmations({
   requests,
   onSubmitted,
@@ -36,6 +36,8 @@ function ConfirmationForm({
   const [error, setError] = useState("");
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const sending = useRef(false);
+  const asyncInput = request.kind === "asyncUserInput";
+  /** 只回传用户明确提交的内容，完成后刷新原对话状态。 */
   async function submit(reply: ConfirmationReply) {
     if (sending.current) return;
     sending.current = true;
@@ -65,13 +67,13 @@ function ConfirmationForm({
   if (submitted)
     return (
       <div className="card-confirmation" role="status">
-        <Check size={14} /> {t("已提交确认")}
+        <Check size={14} /> {t(asyncInput ? "答案已发送" : "已提交确认")}
       </div>
     );
   return (
     <section
       className="card-confirmation"
-      aria-label={t("待确认内容")}
+      aria-label={t(asyncInput ? "待回答问题" : "待确认内容")}
       aria-busy={busy}
     >
       <strong>
@@ -80,7 +82,9 @@ function ConfirmationForm({
             ? "执行操作"
             : request.kind === "fileChange"
               ? "修改文件"
-              : "需要你的选择",
+              : asyncInput
+                ? "需要你的回答"
+                : "需要你的选择",
         )}
       </strong>
       {request.reason && <p>{request.reason}</p>}
@@ -98,7 +102,7 @@ function ConfirmationForm({
           <pre>{request.details}</pre>
         </details>
       )}
-      {request.kind === "userInput" ? (
+      {request.kind === "userInput" || asyncInput ? (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -117,8 +121,8 @@ function ConfirmationForm({
                     onClick={() => {
                       const next = { ...answers, [q.id]: option.label };
                       setAnswers(next);
-                      // 单个问题点击即提交；多个问题需先全部选择再提交。
-                      if (request.questions.length === 1)
+                      // 异步问题先选答案再提交，原生单题保留点击即提交的行为。
+                      if (!asyncInput && request.questions.length === 1)
                         void sendAnswers(next);
                     }}
                   >
@@ -132,19 +136,31 @@ function ConfirmationForm({
                   <span>
                     {t(q.options.length ? "或输入其他答案" : "你的答案")}
                   </span>
-                  <input
-                    type={q.isSecret ? "password" : "text"}
-                    value={answers[q.id] ?? ""}
-                    maxLength={20000}
-                    onChange={(e) =>
-                      setAnswers({ ...answers, [q.id]: e.target.value })
-                    }
-                  />
+                  {asyncInput && !q.isSecret ? (
+                    <textarea
+                      rows={3}
+                      value={answers[q.id] ?? ""}
+                      maxLength={20000}
+                      onChange={(e) =>
+                        setAnswers({ ...answers, [q.id]: e.target.value })
+                      }
+                    />
+                  ) : (
+                    <input
+                      type={q.isSecret ? "password" : "text"}
+                      value={answers[q.id] ?? ""}
+                      maxLength={20000}
+                      onChange={(e) =>
+                        setAnswers({ ...answers, [q.id]: e.target.value })
+                      }
+                    />
+                  )}
                 </label>
               )}
             </fieldset>
           ))}
-          {(request.questions.length > 1 ||
+          {(asyncInput ||
+            request.questions.length > 1 ||
             request.questions.some(
               (q) => q.allowOther || !q.options.length,
             )) && (

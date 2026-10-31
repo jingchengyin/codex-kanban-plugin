@@ -188,10 +188,11 @@ const english: Record<string, string> = {
   添加验收项: "Add acceptance check",
   成果链接: "Deliverable links",
   成果: "Deliverables",
+  收起: "Less",
   自动识别: "Discovered automatically",
   "自动识别 · 来源对话": "Auto-detected · Source conversation",
-  "从关联对话的最终答复中识别 MR、PR 和本机方案文件。":
-    "Find merge requests, pull requests, and local plan files in linked conversations' final replies.",
+  "从关联对话的最终答复中识别 GitHub PR、GitLab MR、计划模式文档和本地方案文件。":
+    "Find GitHub PRs, GitLab MRs, plan-mode documents, and local plan files in linked conversations' final replies.",
   "暂未发现自动成果；对话产生新的最终答复后会自动更新。":
     "No deliverables found yet. New final replies are checked automatically.",
   "关联对话后，会自动查找其中的 MR、PR 和方案文件。":
@@ -281,8 +282,8 @@ const english: Record<string, string> = {
   连接与数据源: "Connection & data sources",
   成果解析规则: "Artifact parsing rules",
   "成果 URL 前缀": "Artifact URL prefixes",
-  "每行一个 URL 前缀。助手最终答复中匹配的链接会显示为成果，保留原有 MR 和本地方案识别。":
-    "Enter one URL prefix per line. Matching links in final assistant replies appear as artifacts. MR and local plan detection stay enabled.",
+  "每行一个 URL 前缀。助手最终答复中匹配的链接会显示为成果。默认支持 GitHub PR、GitLab MR 和计划模式文档解析，也支持本地方案文件识别。":
+    "Enter one URL prefix per line. Matching links in final assistant replies appear as artifacts. GitHub PRs, GitLab MRs, plan-mode documents, and local plan files are supported by default.",
   "保存后会重新识别已有对话的成果，并缓存到磁盘。":
     "Saving reparses artifacts in existing conversations and caches the results on disk.",
   "已保存，正在更新成果缓存。": "Saved. Updating the artifact cache.",
@@ -336,9 +337,11 @@ const english: Record<string, string> = {
   未加载或实时状态不可用: "Not loaded or live status unavailable",
   等待操作确认: "Waiting for approval",
   待确认内容: "Pending confirmation",
+  待回答问题: "Pending questions",
   执行操作: "Run operation",
   修改文件: "Change files",
   需要你的选择: "Your choice is needed",
+  需要你的回答: "Your answer is needed",
   工作目录: "Working directory",
   请求详情: "Request details",
   允许一次: "Allow once",
@@ -348,6 +351,7 @@ const english: Record<string, string> = {
   或输入其他答案: "Or enter another answer",
   你的答案: "Your answer",
   已提交确认: "Confirmation submitted",
+  答案已发送: "Answer sent",
   "确认提交失败，请重试。": "Could not submit confirmation. Please try again.",
   "该请求已处理或已失效，请刷新看板。":
     "This request was handled or expired. Refresh the board.",

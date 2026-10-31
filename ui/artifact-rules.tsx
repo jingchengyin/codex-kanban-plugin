@@ -92,7 +92,7 @@ export function ArtifactRulesSettings({ onSaved }: { onSaved: () => void }) {
       <h3 id="artifact-rules-heading">{t("成果解析规则")}</h3>
       <p className="settings-note" id="artifact-rules-description">
         {t(
-          "每行一个 URL 前缀。助手最终答复中匹配的链接会显示为成果，保留原有 MR 和本地方案识别。",
+          "每行一个 URL 前缀。助手最终答复中匹配的链接会显示为成果。默认支持 GitHub PR、GitLab MR 和计划模式文档解析，也支持本地方案文件识别。",
         )}
       </p>
       {loading ? (

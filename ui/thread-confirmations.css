@@ -53,6 +53,7 @@
   border-radius: 6px;
   background: var(--surface);
   text-align: left;
+  cursor: pointer;
   transition:
     background-color 150ms ease,
     border-color 150ms ease;
@@ -97,15 +98,23 @@
   display: grid;
   gap: 4px;
 }
-.confirmation-answer input {
+.confirmation-answer input,
+.confirmation-answer textarea {
   width: 100%;
+  min-width: 0;
   padding: 8px;
   color: var(--ink);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 5px;
 }
+.confirmation-answer textarea {
+  resize: vertical;
+  font: inherit;
+}
 .confirmation-answer input:focus-visible,
+.confirmation-answer textarea:focus-visible,
+.card-confirmation button:focus-visible,
 .card-confirmation summary:focus-visible {
   outline: 2px solid var(--ink);
   outline-offset: 2px;

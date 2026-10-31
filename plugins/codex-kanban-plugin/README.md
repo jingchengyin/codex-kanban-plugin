@@ -1,4 +1,4 @@
-# Codex Kanban Plugin
+# Codex-Kanban-Plugin
 
 [English](README.md) | [简体中文](README.zh.md)
 
@@ -25,16 +25,30 @@ To install manually, enter the following in **Add plugin marketplace**:
 | Git ref      | `main`                             |
 | Sparse paths | Leave empty                        |
 
-Add the marketplace, then install **对话看板 (Conversation board)** from **Codex Kanban Plugin**.
+Add the marketplace, then install **Codex-Kanban-Plugin**.
 
-Or install with the CLI:
+Or install with the CLI. Run both commands in order for the first installation. If the marketplace is already added, run only the second command:
 
 ```sh
+# Add the plugin marketplace
 codex plugin marketplace add jingchengyin/codex-kanban-plugin --ref main
+
+# Install the plugin from that marketplace
 codex plugin add codex-kanban-plugin@codex-kanban-plugin
 ```
 
-Codex requires a marketplace selector (`@marketplace` or `-m marketplace`). Both the plugin and its marketplace are named `codex-kanban-plugin`.
+The install argument uses `plugin-name@marketplace-name`; you can also specify the marketplace with `-m marketplace-name`. Both the plugin and its marketplace are named `codex-kanban-plugin`.
+
+### Update
+
+For the Git marketplace added above, run:
+
+```sh
+# Fetch the latest main branch and update the installed plugin
+codex plugin marketplace upgrade codex-kanban-plugin
+```
+
+The command uses the Git ref saved when the marketplace was added (`main` in the example above). It also updates the installed plugin, so you do not need to uninstall it or run `plugin add` again. Close and reopen the board after updating.
 
 ### Connect live status
 

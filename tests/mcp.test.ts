@@ -246,6 +246,9 @@ for (const packaged of [false, true]) {
       const artifactPath = join(home, "artifacts.jsonl");
       const mergeRequest =
         "https://gitlab.example/team/project/-/merge_requests/42";
+      const githubPr = "https://github.com/team/project/pull/43";
+      const gitlabMr =
+        "https://gitlab.com/team/subgroup/project/-/merge_requests/44";
       const larkDocument = `${prefix}/VTWBdRKXso20opxNAC2liEuDgpf`;
       const nativePlan =
         "# 消费端小批次提交方案\n\n按批次提交，保留原始事件。\n";
@@ -288,7 +291,7 @@ for (const packaged of [false, true]) {
           payload: {
             type: "task_complete",
             turn_id: "artifact-turn",
-            last_agent_message: `已创建 [MR](${mergeRequest}) 和 [设计方案](${planPath})、[消费优化文档](${larkDocument})，补齐优化前后的完整链路，明确区分**小批次成功**与失败。\n<proposed_plan>\n${nativePlan}</proposed_plan>`,
+            last_agent_message: `已创建 [MR](${mergeRequest})、[GitHub PR](${githubPr}/files?diff=split#discussion) 和 [设计方案](${planPath})、[消费优化文档](${larkDocument})，补齐优化前后的完整链路，明确区分**小批次成功**与失败。GitLab MR：${gitlabMr}/diffs?view=inline#note_1。\n<proposed_plan>\n${nativePlan}</proposed_plan>`,
           },
         }) + "\n",
       );
@@ -335,7 +338,7 @@ for (const packaged of [false, true]) {
         assert.ok(Date.now() - started < 5000, "对话成果后台索引应能完成");
         await new Promise((resolve) => setTimeout(resolve, 20));
       } while (true);
-      assert.equal(threadDiscovery.artifacts.length, 5);
+      assert.equal(threadDiscovery.artifacts.length, 7);
       assert.deepEqual(
         threadDiscovery.artifacts.find((item: any) => item.kind === "link")
           ?.url,
@@ -357,17 +360,18 @@ for (const packaged of [false, true]) {
       assert.notEqual(linked.isError, true);
       assert.deepEqual(linkedData.item.links, manualLinks);
       assert.deepEqual(linkedData.discovery.unavailableThreadIds, []);
-      assert.equal(linkedData.discovery.artifacts.length, 5);
+      assert.equal(linkedData.discovery.artifacts.length, 7);
       assert.ok(
         linkedData.discovery.artifacts.every(
           (artifact: any) => artifact.threadId === artifactThreadId,
         ),
       );
-      assert.equal(
-        linkedData.discovery.artifacts.find(
-          (artifact: any) => artifact.kind === "mergeRequest",
-        ).url,
-        mergeRequest,
+      assert.deepEqual(
+        linkedData.discovery.artifacts
+          .filter((artifact: any) => artifact.kind === "mergeRequest")
+          .map((artifact: any) => artifact.url)
+          .sort(),
+        [mergeRequest, githubPr, gitlabMr, historicalMr].sort(),
       );
       assert.equal(
         linkedData.discovery.artifacts.find(

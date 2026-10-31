@@ -6,6 +6,7 @@ import { DesktopConfirmations } from "./desktop-confirmations.js";
 import { readConfirmations, replyToConfirmation } from "./confirmations.js";
 import type { ConfirmationReply } from "../shared/confirmations.js";
 import {
+  desktopTurns,
   hasUnansweredInput,
   inputState,
   unansweredInput,
@@ -174,36 +175,9 @@ export class StatusBridge {
         ? goal
         : null,
     });
-    // canonical 历史与普通 turns 使用同一批消息，保持原生异步提问的判定。
-    const turns: any[] = Array.isArray(state.turns) ? state.turns : [];
-    const history = state.turnHistory?.history;
-    const ordered: any[] = Array.isArray(history?.islands)
-      ? history.islands.flatMap((island: any) =>
-          (island.entries ?? [])
-            .map((entry: any) => history.entitiesByKey?.[entry.value])
-            .filter(Boolean),
-        )
-      : [];
-    const byId = new Map<string, any>();
-    for (const turn of [...ordered, ...turns]) {
-      const key = turn?.turnId ?? turn?.id;
-      if (typeof key !== "string") continue;
-      const previous = byId.get(key);
-      // 当前回合可能只带较短的实时尾部，按消息 ID 补全 canonical 中已有内容。
-      const items = new Map<unknown, any>();
-      for (const item of [...(previous?.items ?? []), ...(turn.items ?? [])])
-        items.set(item?.id ?? item, item);
-      byId.set(key, { ...previous, ...turn, items: [...items.values()] });
-    }
-    const nativeTurns = [...byId.values()];
-    const items = nativeTurns
-      .flatMap((turn: any) => turn.items ?? [])
-      .map((item: any) =>
-        // 桌面会把已接收的续写消息折叠为 steering，仍应视作用户已回复。
-        item?.type === "steeringUserMessage" && item.status === "accepted"
-          ? { ...item, type: "userMessage" }
-          : item,
-      );
+    // 状态摘要与回答卡片共用同一份历史，避免两处对待答问题的判定不同。
+    const nativeTurns = desktopTurns(state);
+    const items = nativeTurns.flatMap((turn) => turn.items ?? []);
     const previous = this.userInput.get(id);
     this.userInput.set(id, inputState("desktop", items));
     const current = this.userInput.get(id)!;

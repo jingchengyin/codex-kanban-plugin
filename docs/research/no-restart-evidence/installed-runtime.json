@@ -1,0 +1,26 @@
+{
+  "checkedAt": "2026-10-30T08:31:05.847Z",
+  "installedRuntime": true,
+  "transport": "desktop-ipc",
+  "connection": "connected",
+  "callerStatus": {
+    "type": "active",
+    "activeFlags": []
+  },
+  "callerFresh": true,
+  "threadCount": 500,
+  "confirmationCount": 0,
+  "tests": {
+    "total": 169,
+    "passed": 169,
+    "failed": 0
+  },
+  "ui": {
+    "connectionBadge": "Connected",
+    "alerts": 0,
+    "horizontalOverflow": false,
+    "freshThreadsBeforeClosing": 16,
+    "subscriptionsReleasedAfterClosing": true
+  },
+  "confirmationValidation": "Real isolated App Server and local fixed-response model; simulated desktop owner forwarded the original approval over its original stdio connection; command completed and stale UUID was rejected. No real desktop request was answered."
+}

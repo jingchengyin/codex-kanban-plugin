@@ -547,8 +547,19 @@ input {
 .artifact-source:hover {
   color: var(--ink);
 }
+.detected-artifacts-toggle {
+  margin-top: 8px;
+  padding: 4px 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.detected-artifacts-toggle:hover {
+  color: var(--ink);
+  text-decoration: underline;
+}
 .detected-artifact-target:focus-visible,
-.artifact-source:focus-visible {
+.artifact-source:focus-visible,
+.detected-artifacts-toggle:focus-visible {
   outline: 2px solid var(--color-ring-primary, var(--ink));
   outline-offset: 2px;
 }

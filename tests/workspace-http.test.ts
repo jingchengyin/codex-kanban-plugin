@@ -233,13 +233,16 @@ test(
       const larkDocument = `${prefix}/VTWBdRKXso20opxNAC2liEuDgpf`;
       const mergeRequest =
         "https://gitlab.example/team/project/-/merge_requests/42";
+      const githubPr = "https://github.com/team/project/pull/43";
+      const gitlabMr =
+        "https://gitlab.com/team/subgroup/project/-/merge_requests/44";
       await writeFile(planPath, "# 插件方案\n");
       await writeFile(
         artifactPath,
         line({
           type: "task_complete",
           turn_id: "artifact-turn",
-          last_agent_message: `已创建 [MR](${mergeRequest}) 和 [设计方案](${planPath})、[消费优化文档](${larkDocument})。`,
+          last_agent_message: `已创建 [MR](${mergeRequest})、[GitHub PR](${githubPr}/files?diff=split#discussion) 和 [设计方案](${planPath})、[消费优化文档](${larkDocument})。GitLab MR：${gitlabMr}/diffs?view=inline#note_1。`,
         }),
       );
       const artifactDatabase = new DatabaseSync(join(home, "state_5.sqlite"));
@@ -283,7 +286,7 @@ test(
         assert.ok(Date.now() - started < 5000, "对话成果后台索引应能完成");
         await setTimeout(20);
       } while (true);
-      assert.equal(threadDiscovery.artifacts.length, 3);
+      assert.equal(threadDiscovery.artifacts.length, 5);
       assert.equal(
         threadDiscovery.artifacts.find((item: any) => item.kind === "link")
           ?.url,
@@ -302,17 +305,18 @@ test(
       assert.deepEqual(linked.discovery, threadDiscovery);
       assert.deepEqual(linked.item.links, manualLinks);
       assert.deepEqual(linked.discovery.unavailableThreadIds, []);
-      assert.equal(linked.discovery.artifacts.length, 3);
+      assert.equal(linked.discovery.artifacts.length, 5);
       assert.ok(
         linked.discovery.artifacts.every(
           (artifact: any) => artifact.threadId === artifactThreadId,
         ),
       );
-      assert.equal(
-        linked.discovery.artifacts.find(
-          (artifact: any) => artifact.kind === "mergeRequest",
-        ).url,
-        mergeRequest,
+      assert.deepEqual(
+        linked.discovery.artifacts
+          .filter((artifact: any) => artifact.kind === "mergeRequest")
+          .map((artifact: any) => artifact.url)
+          .sort(),
+        [mergeRequest, githubPr, gitlabMr].sort(),
       );
       const plan = linked.discovery.artifacts.find(
         (artifact: any) => artifact.kind === "planFile",
@@ -323,7 +327,7 @@ test(
       ).json()) as any;
       assert.deepEqual(discovered.discovery, linked.discovery);
       assert.deepEqual(discovered.items[0].links, manualLinks);
-      // 删除前缀后，无日志变更也必须重新生成缓存，内建 MR 和方案仍保留。
+      // 删除前缀后，GitHub、GitLab、原有 MR 和本地方案仍由内置规则识别。
       assert.equal(
         (await post("/api/artifact-rules", { urlPrefixes: [] })).status,
         200,
@@ -338,8 +342,15 @@ test(
         assert.ok(Date.now() - clearStarted < 5000);
         await setTimeout(20);
       } while (true);
-      assert.equal(cleared.artifacts.length, 2);
+      assert.equal(cleared.artifacts.length, 4);
       assert.ok(cleared.artifacts.every((item: any) => item.kind !== "link"));
+      assert.deepEqual(
+        cleared.artifacts
+          .filter((artifact: any) => artifact.kind === "mergeRequest")
+          .map((artifact: any) => artifact.url)
+          .sort(),
+        [mergeRequest, githubPr, gitlabMr].sort(),
+      );
       assert.deepEqual(
         ((await (await fetch(`${origin}/api/workspace`)).json()) as any)
           .discovery,

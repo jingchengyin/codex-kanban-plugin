@@ -1,0 +1,41 @@
+{
+  "researchDate": "2026-10-30",
+  "timezone": "Asia/Shanghai",
+  "app": {
+    "version": "26.1023.51421",
+    "build": "22530",
+    "bundleId": "com.openai.codex"
+  },
+  "cliVersion": "0.165.0-alpha.1.2",
+  "processIdsBeforeAndAfter": {
+    "desktop": 1161,
+    "backends": [3115, 8210]
+  },
+  "ipc": {
+    "socket": "CODEX_HOME/ipc/ipc.sock",
+    "directoryMode": "0700",
+    "socketMode": "0600",
+    "followingVersion": 1,
+    "stateVersion": 11,
+    "readStateVersion": 3
+  },
+  "scope": "Current macOS desktop and local host; production plugin integration and actual confirmation replies not tested.",
+  "forbiddenOperationsNotPerformed": [
+    "desktop restart",
+    "App Server restart",
+    "configuration changes",
+    "thread/start",
+    "thread/resume",
+    "approval reply",
+    "user answer",
+    "remote control enable"
+  ],
+  "observerSideEffects": "Temporary follower registration can keep an owned thread loaded. The probe unsubscribes and disconnects.",
+  "nativeMcpMatrix": {
+    "ordinaryNodeParent": "pipe closed",
+    "signedRuntimeDirect": "passed twice",
+    "signedRuntimeWithShellRedirection": "pipe closed",
+    "signedRuntimeExecPolling": "three snapshots passed"
+  },
+  "actualConfirmationTested": false
+}
