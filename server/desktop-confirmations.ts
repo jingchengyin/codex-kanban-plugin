@@ -241,6 +241,7 @@ export class DesktopConfirmations {
       requestId: pending.raw.id,
     };
     let method: string;
+    let questions = pending.confirmation.questions;
     if (
       pending.confirmation.kind === "userInput" ||
       pending.confirmation.kind === "asyncUserInput"
@@ -248,8 +249,13 @@ export class DesktopConfirmations {
       if (!("answers" in parsed))
         throw new Error("确认内容无效，请检查后重试。");
       const answers = parsed.answers;
-      const questions = pending.confirmation.questions;
+      // 异步卡片可跳过问题，只发送并等待本次实际回答的题目。
+      if (pending.confirmation.kind === "asyncUserInput")
+        questions = questions.filter((question) =>
+          Object.hasOwn(answers, question.id),
+        );
       if (
+        !questions.length ||
         Object.keys(answers).length !== questions.length ||
         !questions.every((question) => {
           const answer = answers[question.id]?.answers[0];
@@ -357,9 +363,7 @@ export class DesktopConfirmations {
             ).pending
           : null;
       const stillPending = unanswered
-        ? pending.confirmation.questions.some((question) =>
-            unanswered.has(question.id),
-          )
+        ? questions.some((question) => unanswered.has(question.id))
         : (latest.state.requests ?? []).some(
             (request: any) =>
               request.id === pending.raw.id &&

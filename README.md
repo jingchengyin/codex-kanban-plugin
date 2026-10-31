@@ -8,7 +8,9 @@ A workspace for local Codex conversations, work items, and historical usage revi
 
 ### Install
 
-Requires the macOS desktop app and **Node.js 22.13+**. The plugin finds compatible Node installations in PATH, NVM, and common Homebrew locations. No npm dependency installation or build is needed.
+Requires the macOS desktop app. The plugin first looks for an existing Node.js 22.13+ installation. If none is found, it downloads and verifies a pinned version from the official Node.js website, then caches it in `CODEX_HOME/kanban/runtime` (default: `~/.codex/kanban/runtime`). The first download requires internet access; later launches reuse the cache. No manual Node.js installation, npm dependency installation, or build is needed.
+
+#### Method 1: Install with Codex
 
 Paste this prompt into Codex to have it install the plugin for you:
 
@@ -16,6 +18,8 @@ Paste this prompt into Codex to have it install the plugin for you:
 Please install Codex-Kanban-Plugin from https://github.com/jingchengyin/codex-kanban-plugin.
 Add the plugin marketplace from the main branch, install codex-kanban-plugin@codex-kanban-plugin, and verify the installation.
 ```
+
+#### Method 2: Install manually
 
 To install manually, enter the following in **Add plugin marketplace**:
 
@@ -26,6 +30,8 @@ To install manually, enter the following in **Add plugin marketplace**:
 | Sparse paths | Leave empty                        |
 
 Add the marketplace, then install **Codex-Kanban-Plugin**.
+
+#### Method 3: Install with the CLI
 
 Or install with the CLI. Run both commands in order for the first installation. If the marketplace is already added, run only the second command:
 
@@ -72,5 +78,3 @@ Conversations that are not loaded or whose status is unavailable appear as **Awa
 - **Live updates:** Follow desktop conversation snapshots and incremental updates by default. When disconnected, retain local conversations and the last snapshot, mark the status as no longer live, and show unavailable runtime states as Awaiting sync.
 - **Codex appearance:** Follow the host's light/dark theme, with English by default and a Chinese language option.
 - **Local storage:** Work items are saved in `CODEX_HOME/kanban/workspace.sqlite`, defaulting to `~/.codex/kanban/workspace.sqlite`. Local Codex conversation data is accessed read-only; explicit confirmation replies are sent through the original desktop connection.
-
-Review ranges use calendar days in the browser's timezone. A turn belongs to its start date, falling back to its latest record time if the start is unavailable. Total duration sums known turn durations, including overlapping turns; ongoing durations remain unknown. Logged token usage is not a billing total.

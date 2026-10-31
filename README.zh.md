@@ -2,13 +2,17 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-集中查看本机 Codex 对话，按工作事项组织对话，并回顾历史用量。
+专为 Codex 重度使用者设计，看板模式管理并发对话、工作事项和历史用量。
 
 ## 快速开始
 
+目前只支持 MacOS，Windows 暂未适配，欢迎 PR 👏
+
 ### 安装
 
-需要 macOS 桌面客户端和 **Node.js 22.13+**。插件会从 PATH、NVM 和常见 Homebrew 路径中寻找兼容的 Node，无需安装 npm 依赖或运行构建命令。
+需要 macOS 桌面客户端。插件会优先使用本机已有的 Node.js 22.13+；找不到时，自动从 Node.js 官网下载并校验固定版本，缓存到 `CODEX_HOME/kanban/runtime`（默认 `~/.codex/kanban/runtime`）。首次下载需要联网，之后复用缓存。无需手动安装 Node.js、npm 依赖或运行构建命令。
+
+#### 方式 1: AI 安装
 
 把下面这段话发给 Codex，让它帮你安装：
 
@@ -16,6 +20,8 @@
 请帮我安装 Codex-Kanban-Plugin：https://github.com/jingchengyin/codex-kanban-plugin
 从 main 分支添加插件市场，安装 codex-kanban-plugin@codex-kanban-plugin，并检查安装结果。
 ```
+
+#### 方式 2: 手动安装
 
 手动安装时，在「添加插件市场」中填写：
 
@@ -26,6 +32,8 @@
 | 稀疏路径 | 留空                               |
 
 添加市场后，安装 **Codex-Kanban-Plugin**。
+
+#### 方式 3: CLI 安装
 
 也可以通过 CLI 手动安装。首次安装需按顺序执行两条命令；如果已添加过市场，只需执行第二条：
 
@@ -72,5 +80,3 @@ codex plugin marketplace upgrade codex-kanban-plugin
 - **实时更新：** 默认直接跟随桌面对话的状态快照和增量更新。断线时保留本地对话和最后快照，明确标记状态并非实时，不可用的运行状态归入「状态待同步」。
 - **Codex 外观：** 跟随宿主深浅色主题，默认英文，可切换中文。
 - **数据保存：** 工作事项存放在 `CODEX_HOME/kanban/workspace.sqlite`；未设置 `CODEX_HOME` 时使用 `~/.codex/kanban/workspace.sqlite`。插件只读访问 Codex 本地对话数据；用户在卡片中提交的确认结果通过桌面原连接发送。
-
-工作回顾按浏览器所在时区的日历天计算，按回合开始时间归属；缺少开始时间时使用最近记录时间。总耗时是各回合已知耗时之和，并行回合会分别累计，进行中的耗时记为未知。Token 是日志中的用量，不能直接当作账单费用。

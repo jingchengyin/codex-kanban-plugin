@@ -151,12 +151,13 @@ test("async questions merge ordered canonical history with sparse live turns", (
   assert.deepEqual(f.confirmations.read().requests, []);
 });
 
-test("async answers require every question but allow custom multiline text with options", async () => {
+test("async answers reject invalid answers and allow custom multiline text with options", async () => {
   const f = fixture();
   const pending = f.first();
   assert.ok(pending);
   for (const invalid of [
-    { [questionId(0)]: answers[questionId(0)] },
+    {},
+    { unrelated: { answers: ["unknown question"] } },
     { ...answers, [questionId(1)]: { answers: [" \n "] } },
     { ...answers, unrelated: { answers: ["extra"] } },
   ]) {
@@ -169,6 +170,17 @@ test("async answers require every question but allow custom multiline text with 
       /内容无效/,
     );
   }
+  for (const invalid of [
+    { [questionId(0)]: { answers: [] } },
+    { [questionId(0)]: { answers: ["one", "two"] } },
+  ])
+    await assert.rejects(
+      f.confirmations.reply({
+        id: pending.id,
+        threadId: "thread",
+        answers: invalid,
+      }),
+    );
   await assert.rejects(
     f.confirmations.reply({
       id: pending.id,
@@ -208,6 +220,33 @@ test("async answers require every question but allow custom multiline text with 
   await assert.rejects(
     f.confirmations.reply({ id: pending.id, threadId: "thread", answers }),
     /已处理或已失效/,
+  );
+});
+
+test("skipping the first async question sends only the second answer and keeps the first pending", async () => {
+  const f = fixture();
+  const pending = f.first();
+  assert.ok(pending);
+  f.onSend(async () => {
+    f.echo("userMessage", undefined, replyText([1]));
+    return { ok: true };
+  });
+  assert.deepEqual(
+    await f.confirmations.reply({
+      id: pending.id,
+      threadId: "thread",
+      answers: { [questionId(1)]: answers[questionId(1)] },
+    }),
+    { submitted: true },
+  );
+  assert.equal(f.sent.length, 1);
+  assert.equal(f.sent[0].method, "thread-follower-start-turn");
+  assert.deepEqual(f.sent[0].params.turnStart.request.input, [
+    { type: "text", text: replyText([1]), text_elements: [] },
+  ]);
+  assert.deepEqual(
+    f.first().questions.map((question) => question.id),
+    [questionId(0)],
   );
 });
 

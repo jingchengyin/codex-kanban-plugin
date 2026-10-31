@@ -12,10 +12,10 @@
         "CODEX_HOME",
         "TASKBOARD_WS_URL"
       ],
-      "startup_timeout_sec": 20,
+      "startup_timeout_sec": 180,
       "tool_timeout_sec": 60,
       "env": {
-        "TASKBOARD_BUILD_ID": "795ba45ae2e10ec1d5b3144a8f66a233e7423478dc587787f42fe218e74abf18"
+        "TASKBOARD_BUILD_ID": "d09da4a2653693eecfdc46a4c3e0a3a8a31916ad5b5096a60cd07ad4bdb55f8f"
       }
     }
   }

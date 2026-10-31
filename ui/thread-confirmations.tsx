@@ -3,6 +3,7 @@ import { Check, LoaderCircle, X } from "lucide-react";
 import type { Confirmation, ConfirmationReply } from "../shared/confirmations";
 import { replyToConfirmation } from "./client";
 import { useI18n } from "./i18n";
+import { AsyncQuestionCard } from "./async-question";
 import "./thread-confirmations.css";
 
 /** 卡片内展示原生请求和异步问题，按钮独立于对话跳转区域。 */
@@ -64,16 +65,36 @@ function ConfirmationForm({
         request.questions.map((q) => [q.id, { answers: [values[q.id]] }]),
       ),
     });
+  if (asyncInput)
+    return (
+      <AsyncQuestionCard
+        request={request}
+        busy={busy}
+        submitted={submitted}
+        error={error}
+        onSubmit={(values) =>
+          submit({
+            ...identity,
+            answers: Object.fromEntries(
+              Object.entries(values).map(([id, answer]) => [
+                id,
+                { answers: [answer] },
+              ]),
+            ),
+          })
+        }
+      />
+    );
   if (submitted)
     return (
       <div className="card-confirmation" role="status">
-        <Check size={14} /> {t(asyncInput ? "答案已发送" : "已提交确认")}
+        <Check size={14} /> {t("已提交确认")}
       </div>
     );
   return (
     <section
       className="card-confirmation"
-      aria-label={t(asyncInput ? "待回答问题" : "待确认内容")}
+      aria-label={t("待确认内容")}
       aria-busy={busy}
     >
       <strong>
@@ -82,9 +103,7 @@ function ConfirmationForm({
             ? "执行操作"
             : request.kind === "fileChange"
               ? "修改文件"
-              : asyncInput
-                ? "需要你的回答"
-                : "需要你的选择",
+              : "需要你的选择",
         )}
       </strong>
       {request.reason && <p>{request.reason}</p>}
@@ -102,7 +121,7 @@ function ConfirmationForm({
           <pre>{request.details}</pre>
         </details>
       )}
-      {request.kind === "userInput" || asyncInput ? (
+      {request.kind === "userInput" ? (
         <form
           onSubmit={(e) => {
             e.preventDefault();
@@ -121,8 +140,8 @@ function ConfirmationForm({
                     onClick={() => {
                       const next = { ...answers, [q.id]: option.label };
                       setAnswers(next);
-                      // 异步问题先选答案再提交，原生单题保留点击即提交的行为。
-                      if (!asyncInput && request.questions.length === 1)
+                      // 原生单题保留点击即提交的行为。
+                      if (request.questions.length === 1)
                         void sendAnswers(next);
                     }}
                   >
@@ -136,31 +155,19 @@ function ConfirmationForm({
                   <span>
                     {t(q.options.length ? "或输入其他答案" : "你的答案")}
                   </span>
-                  {asyncInput && !q.isSecret ? (
-                    <textarea
-                      rows={3}
-                      value={answers[q.id] ?? ""}
-                      maxLength={20000}
-                      onChange={(e) =>
-                        setAnswers({ ...answers, [q.id]: e.target.value })
-                      }
-                    />
-                  ) : (
-                    <input
-                      type={q.isSecret ? "password" : "text"}
-                      value={answers[q.id] ?? ""}
-                      maxLength={20000}
-                      onChange={(e) =>
-                        setAnswers({ ...answers, [q.id]: e.target.value })
-                      }
-                    />
-                  )}
+                  <input
+                    type={q.isSecret ? "password" : "text"}
+                    value={answers[q.id] ?? ""}
+                    maxLength={20000}
+                    onChange={(e) =>
+                      setAnswers({ ...answers, [q.id]: e.target.value })
+                    }
+                  />
                 </label>
               )}
             </fieldset>
           ))}
-          {(asyncInput ||
-            request.questions.length > 1 ||
+          {(request.questions.length > 1 ||
             request.questions.some(
               (q) => q.allowOther || !q.options.length,
             )) && (

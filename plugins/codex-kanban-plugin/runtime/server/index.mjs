@@ -52277,12 +52277,16 @@ var DesktopConfirmations = class {
       requestId: pending.raw.id
     };
     let method;
+    let questions = pending.confirmation.questions;
     if (pending.confirmation.kind === "userInput" || pending.confirmation.kind === "asyncUserInput") {
       if (!("answers" in parsed))
         throw new Error("\u786E\u8BA4\u5185\u5BB9\u65E0\u6548\uFF0C\u8BF7\u68C0\u67E5\u540E\u91CD\u8BD5\u3002");
       const answers = parsed.answers;
-      const questions = pending.confirmation.questions;
-      if (Object.keys(answers).length !== questions.length || !questions.every((question) => {
+      if (pending.confirmation.kind === "asyncUserInput")
+        questions = questions.filter(
+          (question) => Object.hasOwn(answers, question.id)
+        );
+      if (!questions.length || Object.keys(answers).length !== questions.length || !questions.every((question) => {
         const answer = answers[question.id]?.answers[0];
         return typeof answer === "string" && answer.trim() && (question.allowOther || question.options.some((option) => option.label === answer));
       }))
@@ -52368,9 +52372,7 @@ ${JSON.stringify(replies)}
         "desktop",
         desktopTurns(latest.state).flatMap((turn) => turn.items ?? [])
       ).pending : null;
-      const stillPending = unanswered ? pending.confirmation.questions.some(
-        (question) => unanswered.has(question.id)
-      ) : (latest.state.requests ?? []).some(
+      const stillPending = unanswered ? questions.some((question) => unanswered.has(question.id)) : (latest.state.requests ?? []).some(
         (request) => request.id === pending.raw.id && request.method === pending.raw.method
       );
       if (!stillPending) return { submitted: true };
