@@ -1,4 +1,4 @@
-/* 异步问题沿用宿主的中性色，以逐题卡片替代整组表单。 */
+/* 异步问题逐题展示，背景透出父卡片的看板列色。 */
 .async-question-card {
   container-type: inline-size;
   min-width: 0;
@@ -6,16 +6,7 @@
   padding: 12px;
   border: 1px solid var(--color-border, var(--line));
   border-radius: var(--radius-3xl, 20px);
-  background: var(
-    --color-surface-elevated-secondary,
-    var(
-      --color-background-control-opaque,
-      light-dark(
-        var(--soft),
-        color-mix(in srgb, var(--surface) 91%, var(--ink))
-      )
-    )
-  );
+  background: transparent;
   color: var(--ink);
   font-size: 13px;
   line-height: 20px;
