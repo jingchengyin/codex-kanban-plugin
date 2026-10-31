@@ -19,7 +19,6 @@ for (const path of [
   "README.md",
   "README.zh.md",
   "LICENSE",
-  "THIRD_PARTY_NOTICES.md",
 ]) {
   await cp(resolve(root, path), resolve(plugin, path), { recursive: true });
 }
@@ -150,6 +149,15 @@ await writeFile(
       ...catalog,
       name: "codex-taskboard-local",
       interface: { displayName: "本地对话看板" },
+      // 离线市场使用随包附带的目录，在线市场才从 Git 下载插件。
+      plugins: catalog.plugins.map((entry) =>
+        entry.name === pkg.name
+          ? {
+              ...entry,
+              source: { source: "local", path: `./plugins/${pkg.name}` },
+            }
+          : entry,
+      ),
     },
     null,
     2,

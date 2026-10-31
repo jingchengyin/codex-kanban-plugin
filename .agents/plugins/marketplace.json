@@ -7,8 +7,10 @@
     {
       "name": "codex-kanban-plugin",
       "source": {
-        "source": "local",
-        "path": "./plugins/codex-kanban-plugin"
+        "source": "git-subdir",
+        "url": "https://github.com/jingchengyin/codex-kanban-plugin.git",
+        "path": "./plugins/codex-kanban-plugin",
+        "ref": "main"
       },
       "policy": {
         "installation": "AVAILABLE",

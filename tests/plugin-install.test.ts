@@ -2,6 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   access,
+  cp,
   mkdtemp,
   mkdir,
   realpath,
@@ -69,6 +70,36 @@ for (const desktopPath of [false, true]) {
         }
       >();
       try {
+        const marketplaceOverride =
+          process.env.TASKBOARD_TEST_MARKETPLACE_SOURCE;
+        const marketplaceSource =
+          marketplaceOverride ?? join(temp, "marketplace");
+        if (marketplaceOverride === undefined) {
+          // 默认验证本次打包内容；显式指定来源时才使用远端市场。
+          await mkdir(join(marketplaceSource, ".agents/plugins"), {
+            recursive: true,
+          });
+          await cp(
+            resolve("plugins/codex-kanban-plugin"),
+            join(marketplaceSource, "plugins/codex-kanban-plugin"),
+            { recursive: true },
+          );
+          await writeFile(
+            join(marketplaceSource, ".agents/plugins/marketplace.json"),
+            JSON.stringify({
+              name: "codex-kanban-plugin",
+              plugins: [
+                {
+                  name: "codex-kanban-plugin",
+                  source: {
+                    source: "local",
+                    path: "./plugins/codex-kanban-plugin",
+                  },
+                },
+              ],
+            }) + "\n",
+          );
+        }
         const run = (args: string[]) =>
           JSON.parse(
             execFileSync(cli, args, {
@@ -82,7 +113,7 @@ for (const desktopPath of [false, true]) {
           "plugin",
           "marketplace",
           "add",
-          process.env.TASKBOARD_TEST_MARKETPLACE_SOURCE ?? resolve("."),
+          marketplaceSource,
           "--json",
         ]);
         assert.equal(marketplace.marketplaceName, "codex-kanban-plugin");
@@ -158,9 +189,10 @@ for (const desktopPath of [false, true]) {
           "taskboard_workspace",
         ]);
         assert.ok(
-          server.resources.some(
-            (resource: any) =>
-              /^ui:\/\/codex-taskboard\/board-[a-f0-9]{16}\.html$/.test(resource.uri),
+          server.resources.some((resource: any) =>
+            /^ui:\/\/codex-taskboard\/board-[a-f0-9]{16}\.html$/.test(
+              resource.uri,
+            ),
           ),
         );
       } finally {
