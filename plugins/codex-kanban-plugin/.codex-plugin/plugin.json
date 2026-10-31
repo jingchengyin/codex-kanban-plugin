@@ -10,7 +10,7 @@
   "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "对话看板",
-    "shortDescription": "管理 Codex 对话、工作事项和历史用量",
+    "shortDescription": "A Kanban board for Codex power users to manage concurrent chats, tasks, and usage history.",
     "longDescription": "集中查看本机对话状态，关联工作事项与验收清单，并回顾历史回合用量。事项保存在插件自己的数据库中，Codex 对话数据只读访问。",
     "developerName": "Codex Kanban Plugin",
     "category": "Developer Tools",
