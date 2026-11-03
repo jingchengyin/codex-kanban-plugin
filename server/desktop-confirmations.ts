@@ -7,7 +7,7 @@ import type {
 } from "../shared/confirmations.js";
 import { confirmationReplyInput } from "./confirmations.js";
 import type { DesktopConversation, DesktopIpc } from "./desktop-ipc.js";
-import { desktopTurns, inputState } from "./user-input.js";
+import { desktopInputState, desktopTurns, inputState } from "./user-input.js";
 
 type Pending = {
   owner: string;
@@ -28,7 +28,7 @@ const text = (value: unknown) => (typeof value === "string" ? value : null);
 /** 把尚未回答的异步问题合为一张卡，回传时保留桌面的逐题标识。 */
 function asyncRequest(threadId: string, state: any) {
   const items = desktopTurns(state).flatMap((turn) => turn.items ?? []);
-  const pending = inputState("desktop", items).pending;
+  const pending = desktopInputState(state).pending;
   if (!pending.size) return null;
   const questions = [];
   for (const item of items) {
@@ -355,6 +355,7 @@ export class DesktopConfirmations {
         latest.ownerClientId !== pending.owner
       )
         throw stale();
+      // 回合结束只代表卡片失效；提交成功仍需在历史中确认答案回显。
       const unanswered =
         pending.confirmation.kind === "asyncUserInput"
           ? inputState(

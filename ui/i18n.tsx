@@ -35,6 +35,7 @@ const english: Record<string, string> = {
   选择事项图标: "Choose work item icon",
   终端: "Terminal",
   分支: "Branch",
+  当前分支: "Current branch",
   合并请求: "Pull request",
   提交: "Commit",
   处理器: "Processor",

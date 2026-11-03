@@ -1,6 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
+  desktopInputState,
   hasUnansweredInput,
   inputState,
   unansweredInput,
@@ -28,6 +29,54 @@ const replyText = (indices: number[], itemId = question.id) => {
   }));
   return `<send_user_message_question_reply>\n${JSON.stringify(indices.length === 1 ? replies[0] : replies)}\n</send_user_message_question_reply>`;
 };
+
+test("desktop async questions only belong to the latest in-progress turn", () => {
+  const first = { turnId: "first", status: "inProgress", items: [question] };
+  for (const status of ["completed", "interrupted", "failed", undefined]) {
+    const state = desktopInputState({ turns: [{ ...first, status }] });
+    assert.equal(hasUnansweredInput(state), false);
+    assert.equal(unansweredInput(state), null);
+  }
+  assert.equal(hasUnansweredInput(desktopInputState({ turns: [first] })), true);
+  assert.equal(
+    hasUnansweredInput(
+      desktopInputState({
+        turns: [first, { turnId: "second", status: "inProgress", items: [] }],
+      }),
+    ),
+    false,
+    "an empty active turn must not resurrect questions from an older turn",
+  );
+  const state = desktopInputState({
+    turns: [
+      first,
+      { turnId: "second", status: "inProgress", items: [nextQuestion] },
+      { turnId: "third", status: "completed", items: [question] },
+    ],
+  });
+  assert.equal(state.turnId, "second");
+  assert.deepEqual(
+    [...state.pending.keys()],
+    [questionId(0, nextQuestion.id), questionId(1, nextQuestion.id)],
+  );
+});
+
+test("live desktop completion overrides canonical questions without reviving them", () => {
+  const history = {
+    entitiesByKey: {
+      first: { turnId: "first", status: "inProgress", items: [question] },
+    },
+    islands: [{ entries: [{ value: "first" }] }],
+  };
+  for (const status of ["completed", "interrupted", "failed"]) {
+    const state = desktopInputState({
+      turnHistory: { history },
+      turns: [{ turnId: "first", status, items: [] }],
+    });
+    assert.equal(hasUnansweredInput(state), false);
+    assert.equal(unansweredInput(state), null);
+  }
+});
 
 test("only messages after a question resolve it, and later questions need input again", () => {
   for (const [items, expected] of [

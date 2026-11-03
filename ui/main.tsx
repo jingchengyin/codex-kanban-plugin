@@ -8,6 +8,7 @@ import {
   Clock3,
   Cpu,
   Folder,
+  GitBranch,
   Languages,
   LoaderCircle,
   Radio,
@@ -1082,6 +1083,10 @@ function ThreadCard({
 }: CardActions & { thread: Thread; compact?: boolean }) {
   const { language, locale, t } = useI18n();
   const state = columnFor(thread);
+  // 分离 HEAD 也保留 worktree 标识，避免把它显示成未知分支。
+  const branchLabel = thread.git
+    ? `${thread.git.isWorktree ? "worktree - " : ""}${thread.git.branch ?? "detached HEAD"}`
+    : null;
   const requests = thread.fresh
     ? (confirmations?.requests.filter(
         (request) => request.threadId === thread.id,
@@ -1155,12 +1160,23 @@ function ThreadCard({
         onClick={() => onOpen(thread)}
         title={t("打开对话：{title}", { title: thread.title })}
         aria-label={t("打开对话：{title}", { title: thread.title })}
-        aria-describedby={`thread-input-${thread.id}`}
+        aria-describedby={`thread-context-${thread.id} thread-input-${thread.id}`}
       >
         <span className="card-top">
-          <span className="card-project">
-            <Folder size={12} />
-            {thread.project}
+          <span className="card-context" id={`thread-context-${thread.id}`}>
+            <span className="card-project" title={thread.cwd}>
+              <Folder size={12} aria-hidden="true" />
+              <span>{thread.project}</span>
+            </span>
+            {branchLabel && (
+              <span
+                className="card-branch"
+                title={`${t("当前分支")}：${branchLabel}`}
+              >
+                <GitBranch size={12} aria-hidden="true" />
+                <span>{branchLabel}</span>
+              </span>
+            )}
           </span>
           {thread.unread === true && (
             <span

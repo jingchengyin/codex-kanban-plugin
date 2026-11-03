@@ -1,11 +1,13 @@
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { readLocalData } from "./local-data.js";
+import { GitMetadataReader } from "./git-metadata.js";
 import { DesktopIpc, type DesktopConversation } from "./desktop-ipc.js";
 import { DesktopConfirmations } from "./desktop-confirmations.js";
 import { readConfirmations, replyToConfirmation } from "./confirmations.js";
 import type { ConfirmationReply } from "../shared/confirmations.js";
 import {
+  desktopInputState,
   desktopTurns,
   hasUnansweredInput,
   inputState,
@@ -39,6 +41,7 @@ export function localEndpoint(value: string): string {
 }
 /** 同步本机对话运行状态和待答标记，首次打开时加载最近的待同步对话。 */
 export class StatusBridge {
+  private gitMetadata = new GitMetadataReader();
   private desktop?: DesktopIpc;
   private desktopConfirmations?: DesktopConfirmations;
   private observationLease?: ReturnType<typeof setTimeout>;
@@ -177,9 +180,8 @@ export class StatusBridge {
     });
     // 状态摘要与回答卡片共用同一份历史，避免两处对待答问题的判定不同。
     const nativeTurns = desktopTurns(state);
-    const items = nativeTurns.flatMap((turn) => turn.items ?? []);
     const previous = this.userInput.get(id);
-    this.userInput.set(id, inputState("desktop", items));
+    this.userInput.set(id, desktopInputState(state));
     const current = this.userInput.get(id)!;
     for (const [key, question] of current.pending) {
       const known = previous?.pending.get(key);
@@ -626,6 +628,17 @@ export class StatusBridge {
     if (!hit) this.cache = { at: Date.now(), selection, data: local };
     const threads = new Map(this.ephemeral);
     for (const thread of local.threads) threads.set(thread.id, thread);
+    // 同一路径只读取一次，同时覆盖尚未写入本地索引的新对话。
+    const gitByCwd = new Map(
+      [...new Set([...threads.values()].map((thread) => thread.cwd))].map(
+        (cwd) => [cwd, this.gitMetadata.read(cwd)],
+      ),
+    );
+    await Promise.all(
+      [...threads].map(async ([id, thread]) => {
+        threads.set(id, { ...thread, git: await gitByCwd.get(thread.cwd)! });
+      }),
+    );
     if (this.connection.state === "connected")
       for (const [id, mode] of this.modes) {
         const thread = threads.get(id);

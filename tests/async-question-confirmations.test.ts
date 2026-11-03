@@ -42,7 +42,7 @@ function fixture(state: any = {}) {
       cwd: "/work/kanban",
       requests: [],
       threadRuntimeStatus: { type: "idle" },
-      turns: [{ turnId: "question-turn", status: "completed", items: [item] }],
+      turns: [{ turnId: "question-turn", status: "inProgress", items: [item] }],
       ...state,
     },
   };
@@ -74,17 +74,12 @@ function fixture(state: any = {}) {
     },
     first: () => confirmations.read().requests[0],
     echo(type = "userMessage", status?: string, text = replyText()) {
-      conversation.state.turns.push({
-        turnId: "reply-turn",
-        items: [
-          {
-            id: "reply-message",
-            type,
-            ...(status ? { status } : {}),
-            [type === "steeringUserMessage" ? "input" : "content"]: [
-              { type: "text", text },
-            ],
-          },
+      conversation.state.turns.at(-1).items.push({
+        id: "reply-message",
+        type,
+        ...(status ? { status } : {}),
+        [type === "steeringUserMessage" ? "input" : "content"]: [
+          { type: "text", text },
         ],
       });
       conversation.revision++;
@@ -137,7 +132,7 @@ test("async questions merge ordered canonical history with sparse live turns", (
     turns: [
       {
         turnId: "question-turn",
-        status: "completed",
+        status: "inProgress",
         items: [{ id: "assistant-tail", type: "agentMessage", text: "Ready." }],
       },
     ],
@@ -149,6 +144,62 @@ test("async questions merge ordered canonical history with sparse live turns", (
   );
   f.echo();
   assert.deepEqual(f.confirmations.read().requests, []);
+});
+
+test("ended question turns remove async cards and reject their old IDs before sending", async () => {
+  for (const status of ["completed", "interrupted", "failed"]) {
+    const f = fixture();
+    const pending = f.first();
+    assert.ok(pending);
+    f.conversation.state.turns[0].status = status;
+    f.conversation.revision++;
+    assert.deepEqual(f.confirmations.read().requests, []);
+    await assert.rejects(
+      f.confirmations.reply({ id: pending.id, threadId: "thread", answers }),
+      /已处理或已失效/,
+    );
+    assert.equal(f.sent.length, 0);
+
+    // 冷启动也不能把历史问题重新变成待回复卡片。
+    const restored = fixture({ turns: f.conversation.state.turns });
+    assert.deepEqual(restored.confirmations.read().requests, []);
+  }
+});
+
+test("an active turn without questions does not revive earlier async questions", () => {
+  for (const status of ["completed", "inProgress"]) {
+    const f = fixture({
+      turns: [
+        { turnId: "old-turn", status, items: [item] },
+        { turnId: "new-turn", status: "inProgress", items: [] },
+      ],
+    });
+    assert.deepEqual(f.confirmations.read().requests, []);
+  }
+});
+
+test("async cards expose only questions from the most recent active turn", () => {
+  const latestItem = {
+    ...item,
+    id: "latest-question",
+    questions: [{ title: "Only the current question" }],
+  };
+  const f = fixture({
+    turns: [
+      { turnId: "old-turn", status: "inProgress", items: [item] },
+      { turnId: "new-turn", status: "inProgress", items: [latestItem] },
+      { turnId: "automatic-turn", status: "completed", items: [] },
+    ],
+  });
+  assert.deepEqual(
+    f.first().questions.map(({ id, question }) => ({ id, question })),
+    [
+      {
+        id: JSON.stringify(["request_user_input_async", latestItem.id, 0]),
+        question: latestItem.questions[0].title,
+      },
+    ],
+  );
 });
 
 test("async answers reject invalid answers and allow custom multiline text with options", async () => {
@@ -294,6 +345,29 @@ test("async routing acknowledgement alone neither confirms delivery nor allows a
   assert.deepEqual(f.confirmations.read().requests, []);
 });
 
+test("a completed turn confirms submitted answers only when desktop history contains their echo", async () => {
+  for (const echoed of [false, true]) {
+    const f = fixture();
+    const pending = f.first();
+    assert.ok(pending);
+    f.onSend(async () => {
+      if (echoed) f.echo();
+      f.conversation.state.turns[0].status = "completed";
+      f.conversation.revision++;
+      return { ok: true };
+    });
+    const sending = f.confirmations.reply({
+      id: pending.id,
+      threadId: "thread",
+      answers,
+    });
+    if (echoed) assert.deepEqual(await sending, { submitted: true });
+    else await assert.rejects(sending, /结果尚未同步/);
+    assert.equal(f.sent.length, 1);
+    assert.deepEqual(f.confirmations.read().requests, []);
+  }
+});
+
 test("a partial question reply cannot confirm that every submitted answer was received", async () => {
   for (const [type, status] of [
     ["userMessage", undefined],
@@ -357,7 +431,7 @@ test("async answers wait for accepted steering instead of an unaccepted pending 
   assert.equal(f.first().id, pending.id);
   f.onSend(async () => {
     setTimeout(() => {
-      f.conversation.state.turns[1].items[0].status = "accepted";
+      f.conversation.state.turns[0].items.at(-1).status = "accepted";
       f.conversation.revision++;
     }, 5);
     return { ok: true };

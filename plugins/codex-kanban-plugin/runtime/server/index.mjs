@@ -51150,7 +51150,7 @@ var OpenAIExtensions = class {
 
 // server/status-bridge.ts
 import { homedir } from "node:os";
-import { basename as basename2, join as join3 } from "node:path";
+import { basename as basename2, join as join4 } from "node:path";
 
 // server/local-data.ts
 import { DatabaseSync } from "node:sqlite";
@@ -51670,10 +51670,72 @@ async function readLocalData(home, selection = null) {
   }
 }
 
+// server/git-metadata.ts
+import { execFile } from "node:child_process";
+import { readFile as readFile2 } from "node:fs/promises";
+import { join as join2 } from "node:path";
+import { promisify } from "node:util";
+var exec = promisify(execFile);
+var GitMetadataReader = class {
+  directories = /* @__PURE__ */ new Map();
+  active = 0;
+  waiting = [];
+  /** 限制并发 Git 进程，目录失效或 Git 不可用时只隐藏仓库信息。 */
+  async locate(cwd) {
+    if (this.active >= 8)
+      await new Promise((resolve2) => this.waiting.push(resolve2));
+    else this.active++;
+    try {
+      const { stdout } = await exec(
+        "git",
+        [
+          "-C",
+          cwd,
+          "rev-parse",
+          "--path-format=absolute",
+          "--git-dir",
+          "--git-common-dir"
+        ],
+        { timeout: 2e3 }
+      );
+      const [gitDir, commonDir] = stdout.trim().split("\n");
+      return gitDir && commonDir ? { gitDir, commonDir } : null;
+    } catch {
+      return null;
+    } finally {
+      const next = this.waiting.shift();
+      if (next) next();
+      else this.active--;
+    }
+  }
+  /** 每次读取当前 HEAD，因此缓存目录不会延迟分支切换的展示。 */
+  async read(cwd) {
+    if (!cwd) return null;
+    let cached3 = this.directories.get(cwd);
+    if (!cached3 || Date.now() - cached3.at >= 5e3) {
+      cached3 = { at: Date.now(), value: this.locate(cwd) };
+      this.directories.set(cwd, cached3);
+    }
+    const directories = await cached3.value;
+    if (!directories) return null;
+    try {
+      const head = (await readFile2(join2(directories.gitDir, "HEAD"), "utf8")).trim();
+      const prefix = "ref: refs/heads/";
+      return {
+        branch: head.startsWith(prefix) ? head.slice(prefix.length) : null,
+        // 子模块也可能使用 .git 文件；只有独立的 commonDir 才表示 linked worktree。
+        isWorktree: directories.gitDir !== directories.commonDir
+      };
+    } catch {
+      return null;
+    }
+  }
+};
+
 // server/desktop-ipc.ts
 import { randomUUID } from "node:crypto";
 import { createConnection } from "node:net";
-import { join as join2 } from "node:path";
+import { join as join3 } from "node:path";
 var ownerMethods = /* @__PURE__ */ new Set([
   "thread-follower-command-approval-decision",
   "thread-follower-file-approval-decision",
@@ -51743,7 +51805,7 @@ var DesktopIpc = class {
     if (this.stopped) return;
     this.options.onState("connecting");
     const socket = createConnection(
-      this.options.socketPath ?? join2(this.options.home, "ipc", "ipc.sock")
+      this.options.socketPath ?? join3(this.options.home, "ipc", "ipc.sock")
     );
     this.socket = socket;
     let buffer = Buffer.alloc(0);
@@ -52034,6 +52096,10 @@ function desktopTurns(state) {
   }
   return [...byId.values()];
 }
+function desktopInputState(state) {
+  const turn = desktopTurns(state).reverse().find((turn2) => turn2.status === "inProgress");
+  return inputState(turn?.turnId ?? turn?.id ?? "desktop", turn?.items ?? []);
+}
 function questionSummary(question) {
   if (typeof question?.title !== "string") return null;
   const text2 = question.title.replace(/\s+/g, " ").trim();
@@ -52118,7 +52184,7 @@ var stale = () => new Error("\u8BE5\u8BF7\u6C42\u5DF2\u5904\u7406\u6216\u5DF2\u5
 var text = (value) => typeof value === "string" ? value : null;
 function asyncRequest(threadId, state) {
   const items = desktopTurns(state).flatMap((turn) => turn.items ?? []);
-  const pending = inputState("desktop", items).pending;
+  const pending = desktopInputState(state).pending;
   if (!pending.size) return null;
   const questions = [];
   for (const item of items) {
@@ -52412,6 +52478,7 @@ function localEndpoint(value) {
   return url3.toString();
 }
 var StatusBridge = class {
+  gitMetadata = new GitMetadataReader();
   desktop;
   desktopConfirmations;
   observationLease;
@@ -52437,7 +52504,7 @@ var StatusBridge = class {
   constructor(options = {}) {
     this.home = options.home ?? process.env.CODEX_HOME ?? `${homedir()}/.codex`;
     const websocket = options.endpoint ?? process.env.TASKBOARD_WS_URL;
-    this.endpoint = websocket ? localEndpoint(websocket) : `ipc://${join3(this.home, "ipc", "ipc.sock")}`;
+    this.endpoint = websocket ? localEndpoint(websocket) : `ipc://${join4(this.home, "ipc", "ipc.sock")}`;
     this.connection = {
       state: "connecting",
       endpoint: this.endpoint,
@@ -52515,9 +52582,8 @@ var StatusBridge = class {
       ].includes(goal) ? goal : null
     });
     const nativeTurns = desktopTurns(state);
-    const items = nativeTurns.flatMap((turn) => turn.items ?? []);
     const previous = this.userInput.get(id);
-    this.userInput.set(id, inputState("desktop", items));
+    this.userInput.set(id, desktopInputState(state));
     const current = this.userInput.get(id);
     for (const [key, question] of current.pending) {
       const known = previous?.pending.get(key);
@@ -52872,6 +52938,16 @@ var StatusBridge = class {
     if (!hit) this.cache = { at: Date.now(), selection, data: local };
     const threads = new Map(this.ephemeral);
     for (const thread of local.threads) threads.set(thread.id, thread);
+    const gitByCwd = new Map(
+      [...new Set([...threads.values()].map((thread) => thread.cwd))].map(
+        (cwd) => [cwd, this.gitMetadata.read(cwd)]
+      )
+    );
+    await Promise.all(
+      [...threads].map(async ([id, thread]) => {
+        threads.set(id, { ...thread, git: await gitByCwd.get(thread.cwd) });
+      })
+    );
     if (this.connection.state === "connected")
       for (const [id, mode2] of this.modes) {
         const thread = threads.get(id);
@@ -52942,7 +53018,7 @@ var StatusBridge = class {
 // server/work-items.ts
 import { randomUUID as randomUUID3 } from "node:crypto";
 import { existsSync, mkdirSync } from "node:fs";
-import { dirname, join as join4 } from "node:path";
+import { dirname, join as join5 } from "node:path";
 import { DatabaseSync as DatabaseSync2 } from "node:sqlite";
 
 // shared/work-item-icons.ts
@@ -53070,7 +53146,7 @@ var workItemThreadInput = external_exports.object({
 var WorkspaceStore = class {
   path;
   constructor(home) {
-    this.path = join4(home, "kanban", "workspace.sqlite");
+    this.path = join5(home, "kanban", "workspace.sqlite");
   }
   /** 首次查看返回空列表，只有保存事项时才创建数据库。 */
   read() {
@@ -53181,7 +53257,7 @@ var WorkspaceStore = class {
 // server/work-history.ts
 import { DatabaseSync as DatabaseSync3 } from "node:sqlite";
 import { open as open3, stat as stat2 } from "node:fs/promises";
-import { basename as basename3, join as join5 } from "node:path";
+import { basename as basename3, join as join6 } from "node:path";
 function consume2(state, event2) {
   event2 = { ...event2, at: new Date(event2.at).toISOString() };
   if (event2.model) state.model = event2.model;
@@ -53392,7 +53468,7 @@ async function readWorkReview(home, options) {
   };
   let database;
   try {
-    database = new DatabaseSync3(join5(home, "state_5.sqlite"), {
+    database = new DatabaseSync3(join6(home, "state_5.sqlite"), {
       readOnly: true
     });
     const columns = new Set(
@@ -53486,10 +53562,10 @@ async function readWorkReview(home, options) {
 }
 
 // server/live-connection.ts
-import { execFile } from "node:child_process";
+import { execFile as execFile2 } from "node:child_process";
 import { access } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { promisify as promisify2 } from "node:util";
 async function launchLiveConnection() {
   if (process.platform !== "darwin")
     throw new Error("\u5B9E\u65F6\u542F\u52A8\u5668\u76EE\u524D\u4EC5\u652F\u6301 macOS\u3002");
@@ -53497,7 +53573,7 @@ async function launchLiveConnection() {
     new URL("../../scripts/Codex Kanban.command", import.meta.url)
   );
   await access(path);
-  await promisify(execFile)("/usr/bin/open", ["-a", "Terminal", path]);
+  await promisify2(execFile2)("/usr/bin/open", ["-a", "Terminal", path]);
   return {
     launched: true,
     message: "\u5DF2\u6253\u5F00\u5B9E\u65F6\u542F\u52A8\u5668\u3002\u82E5 Codex \u5DF2\u8FD0\u884C\uFF0C\u8BF7\u5728\u51C6\u5907\u597D\u540E\u6309 \u2318Q \u5B8C\u5168\u9000\u51FA\uFF0C\u542F\u52A8\u5668\u4F1A\u81EA\u52A8\u7EE7\u7EED\u3002"
@@ -53506,15 +53582,15 @@ async function launchLiveConnection() {
 
 // server/thread-artifacts.ts
 import { createHash as createHash3 } from "node:crypto";
-import { mkdir as mkdir3, readFile as readFile4, stat as stat4, writeFile as writeFile3 } from "node:fs/promises";
-import { isAbsolute as isAbsolute2, join as join8 } from "node:path";
+import { mkdir as mkdir3, readFile as readFile5, stat as stat4, writeFile as writeFile3 } from "node:fs/promises";
+import { isAbsolute as isAbsolute2, join as join9 } from "node:path";
 
 // server/work-artifacts.ts
 import { createHash as createHash2 } from "node:crypto";
 import {
   mkdir,
   open as open4,
-  readFile as readFile2,
+  readFile as readFile3,
   readdir,
   stat as stat3,
   writeFile
@@ -53525,7 +53601,7 @@ import {
   dirname as dirname2,
   extname,
   isAbsolute,
-  join as join6,
+  join as join7,
   normalize,
   resolve
 } from "node:path";
@@ -53809,7 +53885,7 @@ var WorkArtifactReader = class {
   /** 从可丢弃的磁盘缓存恢复完整增量状态，失败时回到正常日志读取。 */
   async loadCache(path, rulesKey) {
     try {
-      const data = JSON.parse(await readFile2(path, "utf8"));
+      const data = JSON.parse(await readFile3(path, "utf8"));
       if (data.schemaVersion !== artifactCacheVersion || (data.rulesKey ?? "[]") !== rulesKey || ![data.ino, data.size, data.mtime, data.offset].every(
         (value) => typeof value === "number" && Number.isFinite(value) && value >= 0
       ) || !Number.isSafeInteger(data.size) || !Number.isSafeInteger(data.offset) || data.offset > data.size || typeof data.state?.cwd !== "string" || !Array.isArray(data.state.artifacts) || !data.state.artifacts.every(
@@ -53857,7 +53933,7 @@ var WorkArtifactReader = class {
     for (const directory of ["sessions", "archived_sessions"]) {
       let entries;
       try {
-        entries = await readdir(join6(home, directory), {
+        entries = await readdir(join7(home, directory), {
           recursive: true,
           withFileTypes: true
         });
@@ -53870,7 +53946,7 @@ var WorkArtifactReader = class {
         if (!id) continue;
         let paths = candidates.get(id);
         if (!paths) candidates.set(id, paths = /* @__PURE__ */ new Set());
-        paths.add(join6(entry.parentPath, entry.name));
+        paths.add(join7(entry.parentPath, entry.name));
       }
     }
     index.candidates = candidates;
@@ -53955,7 +54031,7 @@ var WorkArtifactReader = class {
     let database;
     const rows = /* @__PURE__ */ new Map();
     try {
-      database = new DatabaseSync4(join6(home, "state_5.sqlite"), {
+      database = new DatabaseSync4(join7(home, "state_5.sqlite"), {
         readOnly: true
       });
       const query = database.prepare(
@@ -53986,7 +54062,7 @@ var WorkArtifactReader = class {
           const pendingKey = `${key}\0${rulesKey}`;
           let scan = this.pending.get(pendingKey);
           if (!scan) {
-            const cachePath = join6(
+            const cachePath = join7(
               home,
               "kanban",
               "artifact-cache",
@@ -54036,10 +54112,10 @@ var WorkArtifactReader = class {
   }
   /** 原生计划原样导出到插件缓存，复用 Codex 文件预览；未变化时不重写。 */
   async exportPlan(home, plan) {
-    const path = join6(home, "kanban", "plans", `${plan.id}.md`);
+    const path = join7(home, "kanban", "plans", `${plan.id}.md`);
     let previous = null;
     try {
-      previous = await readFile2(path, "utf8");
+      previous = await readFile3(path, "utf8");
     } catch {
     }
     if (previous !== plan.content) {
@@ -54112,8 +54188,8 @@ var WorkArtifactReader = class {
 
 // server/artifact-rules.ts
 import { randomUUID as randomUUID4 } from "node:crypto";
-import { mkdir as mkdir2, readFile as readFile3, rename, rm, writeFile as writeFile2 } from "node:fs/promises";
-import { dirname as dirname3, join as join7 } from "node:path";
+import { mkdir as mkdir2, readFile as readFile4, rename, rm, writeFile as writeFile2 } from "node:fs/promises";
+import { dirname as dirname3, join as join8 } from "node:path";
 var artifactRulesInput = external_exports.object({
   urlPrefixes: external_exports.array(
     external_exports.string().trim().min(1).max(4e3).url().refine((value) => {
@@ -54126,13 +54202,13 @@ var artifactRulesInput = external_exports.object({
 var ArtifactRulesStore = class {
   path;
   constructor(home) {
-    this.path = join7(home, "kanban", "artifact-rules.json");
+    this.path = join8(home, "kanban", "artifact-rules.json");
   }
   /** 首次打开保留内置规则，不创建文件或默认添加外部前缀。 */
   async read() {
     try {
       return artifactRulesInput.parse(
-        JSON.parse(await readFile3(this.path, "utf8"))
+        JSON.parse(await readFile4(this.path, "utf8"))
       );
     } catch (error112) {
       if (error112.code === "ENOENT")
@@ -54199,7 +54275,7 @@ var ThreadArtifactIndex = class {
   }
   /** 对话标识单独散列，解析状态与可直接读取的成果结果分别存储。 */
   path(threadId) {
-    return join8(
+    return join9(
       this.home,
       "kanban",
       "thread-artifacts",
@@ -54215,7 +54291,7 @@ var ThreadArtifactIndex = class {
     if (!task) {
       task = (async () => {
         try {
-          const data = JSON.parse(await readFile4(this.path(threadId), "utf8"));
+          const data = JSON.parse(await readFile5(this.path(threadId), "utf8"));
           if (data.schemaVersion !== 2 || (data.rulesKey ?? "[]") !== rulesKey || data.threadId !== threadId || typeof data.unavailable !== "boolean" || !Array.isArray(data.artifacts) || !data.artifacts.every(
             (artifact) => artifact?.threadId === threadId && typeof artifact.id === "string" && typeof artifact.label === "string" && typeof artifact.detectedAt === "string" && Number.isFinite(Date.parse(artifact.detectedAt)) && ((artifact.kind === "mergeRequest" || artifact.kind === "link") && typeof artifact.url === "string" || artifact.kind === "planFile" && typeof artifact.path === "string" && isAbsolute2(artifact.path))
           ))
@@ -54313,7 +54389,7 @@ var ThreadArtifactIndex = class {
           try {
             const serialized = JSON.stringify(row);
             if (serialized !== JSON.stringify(this.results.get(threadId))) {
-              await mkdir3(join8(this.home, "kanban", "thread-artifacts"), {
+              await mkdir3(join9(this.home, "kanban", "thread-artifacts"), {
                 recursive: true
               });
               await writeFile3(this.path(threadId), serialized, { mode: 384 });

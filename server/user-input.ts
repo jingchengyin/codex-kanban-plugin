@@ -30,6 +30,15 @@ export function desktopTurns(state: any): any[] {
   return [...byId.values()];
 }
 
+/** 只读取最近进行中回合的异步问题，已结束回合中的问题不再对用户可见。 */
+export function desktopInputState(state: any): InputState {
+  const turn = desktopTurns(state)
+    .reverse()
+    .find((turn) => turn.status === "inProgress");
+  // 与原生卡片一致：当前回合没有问题时，不回退到更早的提问。
+  return inputState(turn?.turnId ?? turn?.id ?? "desktop", turn?.items ?? []);
+}
+
 /** 提取结构化问题的简短原文，不使用助手正文、选项或用户答案。 */
 function questionSummary(question: any): string | null {
   if (typeof question?.title !== "string") return null;

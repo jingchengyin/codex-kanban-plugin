@@ -213,7 +213,7 @@ test("canonical message order clears answered questions and keeps the latest fai
       turns: [
         {
           turnId: "third",
-          status: "completed",
+          status: "inProgress",
           items: [{ ...question, id: "new-question" }],
         },
       ],
@@ -311,7 +311,7 @@ test("a sparse live turn keeps canonical questions until an accepted user reply 
       turns: [
         {
           turnId: "first",
-          status: "completed",
+          status: "inProgress",
           items: [{ id: "tail", type: "agentMessage" }],
         },
       ],
@@ -325,7 +325,7 @@ test("a sparse live turn keeps canonical questions until an accepted user reply 
       turns: [
         {
           turnId: "first",
-          status: "completed",
+          status: "inProgress",
           items: [
             { id: "answer", type: "steeringUserMessage", status: "pending" },
           ],
@@ -339,7 +339,7 @@ test("a sparse live turn keeps canonical questions until an accepted user reply 
       turns: [
         {
           turnId: "first",
-          status: "completed",
+          status: "inProgress",
           items: [
             { id: "answer", type: "steeringUserMessage", status: "accepted" },
           ],
@@ -353,3 +353,97 @@ test("a sparse live turn keeps canonical questions until an accepted user reply 
     await f.close();
   }
 });
+
+for (const status of ["completed", "interrupted"]) {
+  test(`a ${status} desktop turn clears async waiting despite retained canonical questions`, async () => {
+    const f = await fixture();
+    try {
+      await f.bridge.snapshot(null, [id]);
+      await until(
+        async () => (await f.bridge.snapshot()).threads[0]?.fresh === true,
+      );
+      const question = {
+        id: "retained-question",
+        type: "agentMessage",
+        questions: [{ title: "继续处理吗？" }],
+      };
+      f.snapshot({
+        ...f.state(),
+        turnHistory: {
+          history: {
+            entitiesByKey: {
+              current: {
+                turnId: "question-turn",
+                status: "inProgress",
+                items: [question],
+              },
+            },
+            islands: [{ entries: [{ value: "current" }] }],
+          },
+        },
+        turns: [],
+      });
+      await until(
+        async () =>
+          columnFor((await f.bridge.snapshot()).threads[0]) === "waiting",
+      );
+      const waiting = await f.bridge.snapshot();
+      assert.equal(waiting.threads[0].pendingUserInput, true);
+      assert.ok(waiting.threads[0].waitingSince);
+      assert.equal(waiting.threads[0].waitingQuestion, "继续处理吗？");
+      assert.equal(waiting.confirmations?.requests.length, 1);
+
+      // 实时终态覆盖 canonical 的运行状态，但历史问题仍保留。
+      f.snapshot({
+        ...f.state(),
+        threadRuntimeStatus: { type: "idle" },
+        turns: [{ turnId: "question-turn", status, items: [] }],
+      });
+      await until(
+        async () =>
+          (await f.bridge.snapshot()).threads[0].runtime?.type === "idle",
+      );
+      const ended = await f.bridge.snapshot();
+      assert.equal(columnFor(ended.threads[0]), "idle");
+      assert.equal(ended.threads[0].pendingUserInput, false);
+      assert.equal(ended.threads[0].waitingSince, null);
+      assert.equal(ended.threads[0].waitingQuestion, null);
+      assert.deepEqual(ended.confirmations?.requests, []);
+
+      f.snapshot({
+        ...f.state(),
+        threadRuntimeStatus: { type: "active", activeFlags: [] },
+        turns: [
+          { turnId: "question-turn", status, items: [] },
+          {
+            turnId: "next-turn",
+            status: "inProgress",
+            items: [
+              {
+                ...question,
+                id: "next-question",
+                questions: [{ title: "本轮选择哪个方案？" }],
+              },
+            ],
+          },
+        ],
+      });
+      await until(
+        async () =>
+          columnFor((await f.bridge.snapshot()).threads[0]) === "waiting",
+      );
+      const next = await f.bridge.snapshot();
+      assert.equal(next.threads[0].pendingUserInput, true);
+      assert.ok(next.threads[0].waitingSince);
+      assert.equal(next.threads[0].waitingQuestion, "本轮选择哪个方案？");
+      assert.deepEqual(
+        next.confirmations?.requests.flatMap((request) =>
+          request.questions.map((entry) => entry.question),
+        ),
+        ["本轮选择哪个方案？"],
+      );
+    } finally {
+      await f.close();
+    }
+  });
+}

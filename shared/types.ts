@@ -26,11 +26,15 @@ export type TurnUsage = {
 };
 /** 监听关系中的对话引用，使用当前标题并按 ID 跳转。 */
 export type ThreadLink = { id: string; title: string };
+/** 工作目录当前的 Git 状态；无分支名表示 detached HEAD。 */
+export type GitMetadata = { branch: string | null; isWorktree: boolean };
 export type Thread = {
   id: string;
   title: string;
   cwd: string;
   project: string;
+  /** 按实际工作目录读取；非仓库或无法读取时为 null。 */
+  git?: GitMetadata | null;
   updatedAt: string;
   /** 最近一次用户发消息的时间；不会随助手输出或自动续跑更新。 */
   lastUserMessageAt: string | null;
