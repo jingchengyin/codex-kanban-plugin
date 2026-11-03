@@ -52453,7 +52453,8 @@ function compareByLastUserMessage(a, b) {
   return (b.lastUserMessageAt ?? "").localeCompare(a.lastUserMessageAt ?? "") || a.id.localeCompare(b.id);
 }
 function columnFor(thread) {
-  if (!thread.fresh && thread.cachedColumn) return thread.cachedColumn;
+  if (!thread.fresh && thread.cachedColumn)
+    return thread.cachedColumn === "waiting" ? "unknown" : thread.cachedColumn;
   if (!thread.fresh || !thread.runtime) return "unknown";
   if (thread.runtime.type === "systemError" || thread.error) return "error";
   if (thread.pendingUserInput && (thread.runtime.type === "active" || thread.runtime.type === "idle"))

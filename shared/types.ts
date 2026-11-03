@@ -120,7 +120,9 @@ export function belongsToColumn(
 }
 
 export function columnFor(thread: Thread): Column {
-  if (!thread.fresh && thread.cachedColumn) return thread.cachedColumn;
+  // 缓存不能证明仍有待处理请求，等待状态必须由实时快照重新确认。
+  if (!thread.fresh && thread.cachedColumn)
+    return thread.cachedColumn === "waiting" ? "unknown" : thread.cachedColumn;
   if (!thread.fresh || !thread.runtime) return "unknown";
   if (thread.runtime.type === "systemError" || thread.error) return "error";
   if (

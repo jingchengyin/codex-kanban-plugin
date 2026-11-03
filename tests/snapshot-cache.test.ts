@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import type { Snapshot } from "../shared/types";
+import { columnFor, needsAttention, type Snapshot } from "../shared/types";
 import { matchesFilters } from "../ui/board-filters";
 import {
   cachedSnapshot,
@@ -188,6 +188,78 @@ test("stale conversion clears pending actions without modifying the live snapsho
   assert.equal(original.threads[0].waitingQuestion, "PRIVATE_QUESTION");
   assert.equal(stale.syncingThreads, false);
   assert.equal(stale.connection.message, null);
+});
+
+test("restored waiting columns are not presented as current requests for attention", () => {
+  const storage = memoryStorage();
+  const original = snapshot();
+  original.threads[0].unread = false;
+  original.threads[0].runtime = { type: "idle" };
+  assert.equal(columnFor(original.threads[0]), "waiting");
+  writeSnapshotCache(storage, original, null);
+
+  const restored = readSnapshotCache(storage, null)!;
+  for (const cached of [cachedSnapshot(original), restored]) {
+    const thread = cached.threads[0];
+    assert.equal(thread.pendingUserInput, false);
+    assert.equal(thread.waitingQuestion, null);
+    assert.equal(columnFor(thread), "unknown");
+    assert.equal(needsAttention(thread), false);
+    assert.equal(matchesFilters(thread, { state: ["waiting"] }), false);
+    assert.deepEqual(cached.confirmations?.requests, []);
+  }
+});
+
+test("a connected transport cannot revive cached waiting before that thread becomes fresh", () => {
+  const previous = snapshot();
+  previous.threads[0].unread = false;
+  previous.threads[0].runtime = { type: "idle" };
+  let shown = cachedSnapshot(previous);
+  const next = snapshot();
+  next.threads[0] = {
+    ...next.threads[0],
+    unread: false,
+    fresh: false,
+    runtime: null,
+    runtimeAt: null,
+    pendingUserInput: false,
+    waitingQuestion: null,
+    waitingSince: null,
+  };
+  next.confirmations = { available: false, requests: [] };
+
+  // 全局连接成功不能证明某条对话仍在等待，连续轮询也不能恢复旧请求。
+  for (let poll = 0; poll < 3; poll++) {
+    shown = reconcileSnapshot(shown, next);
+    assert.equal(shown.connection.state, "connected");
+    assert.equal(shown.threads[0].fresh, false);
+    assert.equal(shown.threads[0].pendingUserInput, false);
+    assert.equal(columnFor(shown.threads[0]), "unknown");
+    assert.equal(needsAttention(shown.threads[0]), false);
+    assert.deepEqual(shown.confirmations?.requests, []);
+  }
+
+  const waiting = {
+    ...next,
+    threads: [
+      {
+        ...previous.threads[0],
+        fresh: true,
+      },
+    ],
+  };
+  shown = reconcileSnapshot(shown, waiting);
+  assert.equal(columnFor(shown.threads[0]), "waiting");
+  assert.equal(needsAttention(shown.threads[0]), true);
+  assert.equal(shown.threads[0].cachedColumn, undefined);
+
+  shown = reconcileSnapshot(shown, {
+    ...next,
+    threads: [{ ...next.threads[0], fresh: true, runtime: { type: "idle" } }],
+  });
+  assert.equal(columnFor(shown.threads[0]), "idle");
+  assert.equal(needsAttention(shown.threads[0]), false);
+  assert.equal(shown.threads[0].cachedColumn, undefined);
 });
 
 test("an authoritative empty directory can explicitly clear the previous cached list", () => {
