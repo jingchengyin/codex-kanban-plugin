@@ -30,13 +30,18 @@ export function desktopTurns(state: any): any[] {
   return [...byId.values()];
 }
 
-/** 对齐原生 readUnansweredAsyncQuestions，只读取最近进行中回合的待答问题。 */
+/** 按历史维护未答澄清；正常完成保留待确认，客户端关闭卡片暂不参与判定。 */
 export function desktopInputState(state: any): InputState {
-  const turn = desktopTurns(state)
-    .reverse()
-    .find((turn) => turn.status === "inProgress");
-  // 历史未答问题不等于当前可见卡片；本轮没有问题时也不回退到旧提问。
-  return inputState(turn?.turnId ?? turn?.id ?? "desktop", turn?.items ?? []);
+  let current = inputState("desktop", []);
+  for (const turn of desktopTurns(state)) {
+    const turnId = turn.turnId ?? turn.id;
+    if (turn.status === "interrupted" || turn.status === "failed")
+      current = inputState(turnId, []);
+    // 答案可在后续回合回显；逐题回复解除对应问题，普通新消息解除整组。
+    else if (turn.status === "inProgress" || turn.status === "completed")
+      current = inputState(turnId, turn.items ?? [], current);
+  }
+  return current;
 }
 
 /** 提取结构化问题的简短原文，不使用助手正文、选项或用户答案。 */

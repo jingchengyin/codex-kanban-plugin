@@ -355,7 +355,7 @@ export class DesktopConfirmations {
         latest.ownerClientId !== pending.owner
       )
         throw stale();
-      // 回合结束只代表卡片失效；提交成功仍需在历史中确认答案回显。
+      // 正常完成不代表已作答；提交成功仍需在历史中确认答案回显。
       const unanswered =
         pending.confirmation.kind === "asyncUserInput"
           ? inputState(

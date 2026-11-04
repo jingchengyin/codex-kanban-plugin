@@ -42,7 +42,7 @@ function fixture(state: any = {}) {
       cwd: "/work/kanban",
       requests: [],
       threadRuntimeStatus: { type: "idle" },
-      turns: [{ turnId: "question-turn", status: "inProgress", items: [item] }],
+      turns: [{ turnId: "question-turn", status: "completed", items: [item] }],
       ...state,
     },
   };
@@ -74,12 +74,18 @@ function fixture(state: any = {}) {
     },
     first: () => confirmations.read().requests[0],
     echo(type = "userMessage", status?: string, text = replyText()) {
-      conversation.state.turns.at(-1).items.push({
-        id: "reply-message",
-        type,
-        ...(status ? { status } : {}),
-        [type === "steeringUserMessage" ? "input" : "content"]: [
-          { type: "text", text },
+      conversation.state.turns.push({
+        turnId: "reply-turn",
+        status: "inProgress",
+        items: [
+          {
+            id: "reply-message",
+            type,
+            ...(status ? { status } : {}),
+            [type === "steeringUserMessage" ? "input" : "content"]: [
+              { type: "text", text },
+            ],
+          },
         ],
       });
       conversation.revision++;
@@ -132,7 +138,7 @@ test("async questions merge ordered canonical history with sparse live turns", (
     turns: [
       {
         turnId: "question-turn",
-        status: "inProgress",
+        status: "completed",
         items: [{ id: "assistant-tail", type: "agentMessage", text: "Ready." }],
       },
     ],
@@ -146,8 +152,30 @@ test("async questions merge ordered canonical history with sparse live turns", (
   assert.deepEqual(f.confirmations.read().requests, []);
 });
 
-test("ended question turns remove async cards and reject their old IDs before sending", async () => {
-  for (const status of ["completed", "interrupted", "failed"]) {
+test("normal completion keeps unanswered cards and their stable IDs", () => {
+  const f = fixture({
+    turns: [{ turnId: "question-turn", status: "inProgress", items: [item] }],
+  });
+  const pending = f.first();
+  assert.ok(pending);
+  f.conversation.state.turns[0].status = "completed";
+  f.conversation.state.turns[0].items.push({
+    id: "final-answer",
+    type: "agentMessage",
+    phase: "final_answer",
+    text: "The clarification card is ready.",
+  });
+  f.conversation.revision++;
+  assert.equal(f.first().id, pending.id);
+  assert.deepEqual(
+    f.first().questions.map((question) => question.id),
+    [questionId(0), questionId(1)],
+  );
+  assert.equal(f.sent.length, 0);
+});
+
+test("cancelled question turns remove async cards and reject their old IDs before sending", async () => {
+  for (const status of ["interrupted", "failed"]) {
     const f = fixture();
     const pending = f.first();
     assert.ok(pending);
@@ -172,7 +200,7 @@ test("ended question turns remove async cards and reject their old IDs before se
   }
 });
 
-test("the latest active turn without questions does not fall back to old questions", () => {
+test("automatic turns preserve earlier unanswered questions until a user reply", () => {
   for (const status of ["completed", "inProgress"]) {
     const f = fixture({
       turns: [
@@ -184,11 +212,16 @@ test("the latest active turn without questions does not fall back to old questio
         },
       ],
     });
+    assert.deepEqual(
+      f.first().questions.map((question) => question.id),
+      [questionId(0), questionId(1)],
+    );
+    f.echo();
     assert.deepEqual(f.confirmations.read().requests, []);
   }
 });
 
-test("async cards expose only the latest active questions and ignore subsequent completed questions", () => {
+test("new user input clears old questions while automatic completion keeps new unanswered questions", () => {
   const latestItem = {
     ...item,
     id: "latest-question",
@@ -200,12 +233,12 @@ test("async cards expose only the latest active questions and ignore subsequent 
       {
         turnId: "new-turn",
         status: "inProgress",
-        items: [latestItem],
+        items: [{ type: "userMessage", content: [] }, latestItem],
       },
       {
         turnId: "automatic-turn",
         status: "completed",
-        items: [{ ...item, id: "completed-question" }],
+        items: [],
       },
     ],
   });
@@ -370,7 +403,7 @@ test("a completed turn confirms submitted answers only when desktop history cont
     assert.ok(pending);
     f.onSend(async () => {
       f.conversation.state.turns[0].status = "completed";
-      // 问题卡已失效后，仍须从后续回合的历史确认真实答案回显。
+      // 回合结束不能替代真实答案回显，仍须检查后续回合历史。
       if (echoed)
         f.conversation.state.turns.push({
           turnId: "reply-turn",

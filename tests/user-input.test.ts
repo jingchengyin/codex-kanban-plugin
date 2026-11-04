@@ -30,38 +30,49 @@ const replyText = (indices: number[], itemId = question.id) => {
   return `<send_user_message_question_reply>\n${JSON.stringify(indices.length === 1 ? replies[0] : replies)}\n</send_user_message_question_reply>`;
 };
 
-test("desktop async questions only belong to the latest in-progress turn", () => {
+test("desktop async questions survive completion and clear on replies or cancellation", () => {
   const first = { turnId: "first", status: "inProgress", items: [question] };
-  for (const status of ["completed", "interrupted", "failed", undefined]) {
+  for (const status of ["interrupted", "failed", undefined]) {
     const state = desktopInputState({ turns: [{ ...first, status }] });
     assert.equal(hasUnansweredInput(state), false);
     assert.equal(unansweredInput(state), null);
   }
-  assert.equal(hasUnansweredInput(desktopInputState({ turns: [first] })), true);
+  for (const status of ["inProgress", "completed"])
+    assert.equal(
+      hasUnansweredInput(desktopInputState({ turns: [{ ...first, status }] })),
+      true,
+    );
   assert.equal(
     hasUnansweredInput(
       desktopInputState({
-        turns: [first, { turnId: "second", status: "inProgress", items: [] }],
+        turns: [
+          first,
+          { turnId: "second", status: "inProgress", items: [message] },
+        ],
       }),
     ),
     false,
-    "an empty active turn must not resurrect questions from an older turn",
+    "an ordinary user message clears earlier questions",
   );
   const state = desktopInputState({
     turns: [
       first,
-      { turnId: "second", status: "inProgress", items: [nextQuestion] },
-      { turnId: "third", status: "completed", items: [question] },
+      {
+        turnId: "second",
+        status: "inProgress",
+        items: [message, nextQuestion],
+      },
+      { turnId: "third", status: "completed", items: [] },
     ],
   });
-  assert.equal(state.turnId, "second");
+  assert.equal(state.turnId, "third");
   assert.deepEqual(
     [...state.pending.keys()],
     [questionId(0, nextQuestion.id), questionId(1, nextQuestion.id)],
   );
 });
 
-test("live desktop terminal status overrides retained canonical questions", () => {
+test("live completion retains canonical questions while interruption or failure clears them", () => {
   const history = {
     entitiesByKey: {
       first: { turnId: "first", status: "inProgress", items: [question] },
@@ -73,12 +84,15 @@ test("live desktop terminal status overrides retained canonical questions", () =
       turnHistory: { history },
       turns: [{ turnId: "first", status, items: [] }],
     });
-    assert.equal(hasUnansweredInput(state), false);
-    assert.equal(unansweredInput(state), null);
+    assert.equal(hasUnansweredInput(state), status === "completed");
+    assert.equal(
+      unansweredInput(state)?.summary ?? null,
+      status === "completed" ? "PRIVATE_QUESTION" : null,
+    );
   }
 });
 
-test("desktop replies in later turns cannot revive questions from completed turns", () => {
+test("accepted desktop replies in later turns resolve only their named questions", () => {
   const first = { turnId: "first", status: "completed", items: [question] };
   const second = {
     turnId: "second",
@@ -101,25 +115,35 @@ test("desktop replies in later turns cannot revive questions from completed turn
     ],
   };
   const partial = desktopInputState({ turnHistory: { history } });
-  assert.deepEqual([...partial.pending.keys()], []);
-  assert.equal(unansweredInput(partial), null);
+  assert.deepEqual([...partial.pending.keys()], [questionId(1)]);
+  assert.equal(unansweredInput(partial)?.summary, "PRIVATE_QUESTION_2");
   third.items.push({
-    ...message,
-    content: [{ type: "text", text: replyText([1]) }],
+    type: "steeringUserMessage",
+    status: "pending",
+    input: [{ type: "text", text: replyText([1]) }],
   });
+  assert.deepEqual(
+    [...desktopInputState({ turnHistory: { history } }).pending.keys()],
+    [questionId(1)],
+  );
+  third.items[0].status = "accepted";
   const resolved = desktopInputState({ turnHistory: { history } });
   assert.equal(hasUnansweredInput(resolved), false);
   assert.equal(unansweredInput(resolved), null);
 });
 
-test("empty automatic turns do not revive questions from completed turns", () => {
+test("empty automatic turns retain unanswered questions until interruption or failure", () => {
   const first = { turnId: "first", status: "completed", items: [question] };
   for (const status of ["inProgress", "completed", "interrupted", "failed"]) {
     const state = desktopInputState({
       turns: [first, { turnId: "second", status, items: [] }],
     });
-    assert.equal(hasUnansweredInput(state), false);
-    assert.equal(unansweredInput(state), null);
+    const pending = status === "inProgress" || status === "completed";
+    assert.equal(hasUnansweredInput(state), pending);
+    assert.equal(
+      unansweredInput(state)?.summary ?? null,
+      pending ? "PRIVATE_QUESTION" : null,
+    );
   }
 });
 

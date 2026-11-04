@@ -1,6 +1,6 @@
 {
   "name": "codex-kanban-plugin",
-  "version": "0.2.4",
+  "version": "0.2.5",
   "description": "本机 Codex 工作台：对话状态、合集与历史用量回顾。",
   "author": {
     "name": "jingchengyin"
