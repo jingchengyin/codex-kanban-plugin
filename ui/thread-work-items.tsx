@@ -21,7 +21,7 @@ type Props = {
   onOpenItem: (id: string) => void;
 };
 
-/** 从对话卡片直接关联事项，并用标签返回该事项。 */
+/** 从对话卡片直接关联合集，并用标签返回该合集。 */
 export function ThreadWorkItems({ thread, items, onAdd, onOpenItem }: Props) {
   const { t } = useI18n();
   const linked = items.filter((item) => item.threadIds.includes(thread.id));
@@ -43,7 +43,7 @@ export function ThreadWorkItems({ thread, items, onAdd, onOpenItem }: Props) {
               } as CSSProperties
             }
             title={item.title}
-            aria-label={t("打开事项：{title}", { title: item.title })}
+            aria-label={t("打开合集：{title}", { title: item.title })}
             onClick={() => onOpenItem(item.id)}
           >
             <WorkItemIcon
@@ -61,10 +61,10 @@ export function ThreadWorkItems({ thread, items, onAdd, onOpenItem }: Props) {
         variant="ghost"
         size="sm"
         icon={<FolderPlus size={13} />}
-        aria-label={t("将对话加入事项：{title}", { title: thread.title })}
+        aria-label={t("将对话加入合集：{title}", { title: thread.title })}
         onClick={onAdd}
       >
-        {t("加入事项")}
+        {t("加入合集")}
       </Button>
     </div>
   );
@@ -102,7 +102,7 @@ export function ThreadWorkItemPicker({
     item.title.toLocaleLowerCase().includes(query.trim().toLocaleLowerCase()),
   );
 
-  /** 现有事项只追加关联；新事项复用既有保存接口和数据结构。 */
+  /** 现有合集只追加关联；新合集复用既有保存接口和数据结构。 */
   async function save(id?: string) {
     if (busy || (!id && !title.trim())) return;
     setBusy(id ?? "new");
@@ -124,7 +124,7 @@ export function ThreadWorkItemPicker({
       onClose();
     } catch (reason) {
       setError(
-        reason instanceof Error ? reason.message : "关联事项失败，请重试。",
+        reason instanceof Error ? reason.message : "关联合集失败，请重试。",
       );
       setBusy(null);
     }
@@ -142,7 +142,7 @@ export function ThreadWorkItemPicker({
       }}
     >
       <div className="thread-work-item-dialog-heading">
-        <h2 id={heading}>{t("加入事项")}</h2>
+        <h2 id={heading}>{t("加入合集")}</h2>
         <Button
           variant="ghost"
           icon={<X size={16} />}
@@ -153,7 +153,7 @@ export function ThreadWorkItemPicker({
       </div>
       <p className="thread-work-item-source">{thread.title}</p>
       <label className="thread-work-item-field">
-        {t("搜索已有事项")}
+        {t("搜索已有合集")}
         <input
           className="workspace-input"
           value={query}
@@ -199,8 +199,8 @@ export function ThreadWorkItemPicker({
           <p className="workspace-hint">
             {t(
               items.length
-                ? "没有匹配的事项，可在下方新建。"
-                : "还没有工作事项，可在下方新建。",
+                ? "没有匹配的合集，可在下方新建。"
+                : "还没有合集，可在下方新建。",
             )}
           </p>
         )}
@@ -220,7 +220,7 @@ export function ThreadWorkItemPicker({
           disabled={busy !== null}
         />
         <label className="thread-work-item-field">
-          {t("新事项名称")}
+          {t("新合集名称")}
           <input
             className="workspace-input"
             value={title}

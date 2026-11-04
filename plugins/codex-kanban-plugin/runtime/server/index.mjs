@@ -51494,7 +51494,7 @@ function readGoals(home) {
   }
 }
 function threadKind(row) {
-  return row.agent_role || typeof row.source === "string" && row.source.includes("subagent") || row.thread_source === "agent" ? "agent" : row.thread_source === "user" || row.source === "vscode" ? "user" : "unknown";
+  return row.agent_role || typeof row.source === "string" && row.source.includes("subagent") || row.thread_source === "agent" || row.thread_source === "subagent" || row.thread_source === "guardian_review" ? "agent" : row.thread_source === "user" || row.source === "vscode" ? "user" : "unknown";
 }
 function displayTitle(name, fallback) {
   let value = typeof name === "string" && name.trim() ? name : String(fallback || "\u672A\u547D\u540D\u5BF9\u8BDD");
@@ -51512,6 +51512,37 @@ function displayTitle(name, fallback) {
     "$1[\u5DF2\u9690\u85CF\u51ED\u636E]"
   );
   return [...value].length > 120 ? [...value].slice(0, 120).join("") + "\u2026" : value || "\u672A\u547D\u540D\u5BF9\u8BDD";
+}
+function readLinkedThreads(home, threadIds) {
+  if (!threadIds.length) return [];
+  let database;
+  try {
+    database = new DatabaseSync(join(home, "state_5.sqlite"), {
+      readOnly: true
+    });
+    const columns = new Set(
+      database.prepare("PRAGMA table_info(threads)").all().map((column) => column.name)
+    );
+    const fields = ["name", "source", "thread_source", "agent_role"].map((name) => columns.has(name) ? name : `NULL AS ${name}`).join(", ");
+    const find = database.prepare(
+      `SELECT id, title, ${fields}, cwd FROM threads WHERE id = ?`
+    );
+    const threads = [];
+    for (const id of new Set(threadIds)) {
+      const row = find.get(id);
+      if (row && threadKind(row) !== "agent")
+        threads.push({
+          id: String(row.id),
+          title: displayTitle(row.name, row.title),
+          project: basename(String(row.cwd || "")) || "\u672A\u5F52\u5C5E\u9879\u76EE"
+        });
+    }
+    return threads;
+  } catch {
+    return [];
+  } finally {
+    database?.close();
+  }
 }
 function parseUnread(state, selection = null, visibleThreadIds) {
   const missing = (reason) => ({
@@ -53183,7 +53214,7 @@ var WorkspaceStore = class {
       database.exec("BEGIN IMMEDIATE");
       const previous = value.id ? database.prepare("SELECT data FROM work_items WHERE id = ?").get(value.id) : void 0;
       if (value.id && !previous)
-        throw new Error("\u5DE5\u4F5C\u4E8B\u9879\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
+        throw new Error("\u5408\u96C6\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
       const previousItem = previous ? JSON.parse(previous.data) : void 0;
       const now2 = (/* @__PURE__ */ new Date()).toISOString();
       const icon2 = value.icon ?? (previousItem ? resolveWorkItemIcon(previousItem) : randomWorkItemIcon());
@@ -53211,20 +53242,20 @@ var WorkspaceStore = class {
   addThread(id, threadId) {
     workItemThreadInput.parse({ id, threadId });
     if (!existsSync(this.path))
-      throw new Error("\u5DE5\u4F5C\u4E8B\u9879\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
+      throw new Error("\u5408\u96C6\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
     const database = new DatabaseSync2(this.path);
     let item;
     try {
       database.exec("PRAGMA busy_timeout=3000");
       database.exec("BEGIN IMMEDIATE");
       const row = database.prepare("SELECT data FROM work_items WHERE id = ?").get(id);
-      if (!row) throw new Error("\u5DE5\u4F5C\u4E8B\u9879\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
+      if (!row) throw new Error("\u5408\u96C6\u4E0D\u5B58\u5728\uFF0C\u8BF7\u5237\u65B0\u540E\u91CD\u8BD5\u3002");
       item = JSON.parse(row.data);
       item.icon = resolveWorkItemIcon(item);
       item.iconColor = resolveWorkItemIconColor(item);
       if (!item.threadIds.includes(threadId)) {
         if (item.threadIds.length >= 500)
-          throw new RangeError("\u6BCF\u4E2A\u4E8B\u9879\u6700\u591A\u5173\u8054 500 \u6761\u5BF9\u8BDD\u3002");
+          throw new RangeError("\u6BCF\u4E2A\u5408\u96C6\u6700\u591A\u5173\u8054 500 \u6761\u5BF9\u8BDD\u3002");
         item = {
           ...item,
           threadIds: [...item.threadIds, threadId],
@@ -54426,6 +54457,10 @@ var workspace = new WorkspaceStore(bridge.home);
 var artifacts = new ThreadArtifactIndex(bridge.home);
 var discover = async (data) => ({
   ...data,
+  linkedThreads: readLinkedThreads(
+    bridge.home,
+    data.items.flatMap((item) => item.threadIds)
+  ),
   discovery: await artifacts.read(data.items.flatMap((item) => item.threadIds))
 });
 bridge.start();
@@ -54595,8 +54630,8 @@ var handle = serveStdio(
       "taskboard_workspace",
       {
         ...base,
-        title: "\u8BFB\u53D6\u5DE5\u4F5C\u4E8B\u9879",
-        description: "\u8BFB\u53D6\u63D2\u4EF6\u4FDD\u5B58\u7684\u5DE5\u4F5C\u4E8B\u9879\u3001\u5173\u8054\u5BF9\u8BDD\u4E0E\u9A8C\u6536\u6E05\u5355\u3002",
+        title: "\u8BFB\u53D6\u5408\u96C6",
+        description: "\u8BFB\u53D6\u63D2\u4EF6\u4FDD\u5B58\u7684\u5408\u96C6\u3001\u5173\u8054\u5BF9\u8BDD\u4E0E\u9A8C\u6536\u6E05\u5355\u3002",
         _meta: appMeta
       },
       async () => result(await discover(workspace.read()))
@@ -54606,8 +54641,8 @@ var handle = serveStdio(
       {
         ...base,
         inputSchema: workItemInput,
-        title: "\u4FDD\u5B58\u5DE5\u4F5C\u4E8B\u9879",
-        description: "\u4FDD\u5B58\u7528\u6237\u5728\u63D2\u4EF6\u4E2D\u7F16\u8F91\u7684\u4E8B\u9879\u3001\u9A8C\u6536\u6E05\u5355\u548C\u6210\u679C\u94FE\u63A5\u3002",
+        title: "\u4FDD\u5B58\u5408\u96C6",
+        description: "\u4FDD\u5B58\u7528\u6237\u5728\u63D2\u4EF6\u4E2D\u7F16\u8F91\u7684\u5408\u96C6\u3001\u9A8C\u6536\u6E05\u5355\u548C\u6210\u679C\u94FE\u63A5\u3002",
         annotations: { ...base.annotations, readOnlyHint: false },
         _meta: appMeta
       },
@@ -54618,8 +54653,8 @@ var handle = serveStdio(
       {
         ...base,
         inputSchema: workItemThreadInput,
-        title: "\u5173\u8054\u5BF9\u8BDD\u5230\u4E8B\u9879",
-        description: "\u628A\u5F53\u524D\u5BF9\u8BDD\u52A0\u5165\u5DF2\u6709\u4E8B\u9879\uFF0C\u4FDD\u7559\u4E8B\u9879\u6700\u65B0\u7684\u8BF4\u660E\u548C\u9A8C\u6536\u8BB0\u5F55\u3002",
+        title: "\u5173\u8054\u5BF9\u8BDD\u5230\u5408\u96C6",
+        description: "\u628A\u5F53\u524D\u5BF9\u8BDD\u52A0\u5165\u5DF2\u6709\u5408\u96C6\uFF0C\u4FDD\u7559\u5408\u96C6\u6700\u65B0\u7684\u8BF4\u660E\u548C\u9A8C\u6536\u8BB0\u5F55\u3002",
         annotations: {
           ...base.annotations,
           readOnlyHint: false,
@@ -54634,8 +54669,8 @@ var handle = serveStdio(
       {
         ...base,
         inputSchema: external_exports.object({ id: external_exports.string().uuid() }),
-        title: "\u5220\u9664\u5DE5\u4F5C\u4E8B\u9879",
-        description: "\u5220\u9664\u63D2\u4EF6\u4E2D\u7684\u5DE5\u4F5C\u4E8B\u9879\u8BB0\u5F55\u3002",
+        title: "\u5220\u9664\u5408\u96C6",
+        description: "\u5220\u9664\u63D2\u4EF6\u4E2D\u7684\u5408\u96C6\u8BB0\u5F55\u3002",
         annotations: {
           ...base.annotations,
           readOnlyHint: false,

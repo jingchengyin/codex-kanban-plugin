@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { StatusBridge } from "./status-bridge.js";
+import { readLinkedThreads } from "./local-data.js";
 import { WorkspaceStore } from "./work-items.js";
 import { readWorkReview } from "./work-history.js";
 import { launchLiveConnection } from "./live-connection.js";
@@ -13,6 +14,10 @@ const artifacts = new ThreadArtifactIndex(bridge.home);
 /** 预览和工作事项复用同一份对话成果磁盘索引。 */
 const discover = async <T extends WorkspaceData>(data: T) => ({
   ...data,
+  linkedThreads: readLinkedThreads(
+    bridge.home,
+    data.items.flatMap((item) => item.threadIds),
+  ),
   discovery: await artifacts.read(data.items.flatMap((item) => item.threadIds)),
 });
 const port = Number(process.env.TASKBOARD_PORT ?? 4318);

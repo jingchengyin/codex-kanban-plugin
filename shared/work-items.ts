@@ -1,4 +1,5 @@
 import type { WorkItemIconColor, WorkItemIconName } from "./work-item-icons";
+import type { Thread } from "./types";
 
 /** 工作事项独立记录交付进度，不根据对话运行状态推断是否完成。 */
 export type WorkItemStatus = "planned" | "active" | "review" | "done";
@@ -44,9 +45,13 @@ export type ArtifactDiscovery = {
   pendingThreadIds?: string[];
 };
 
+/** 事项关联列表只需要基本信息，运行状态仍由看板快照提供。 */
+export type WorkItemThread = Pick<Thread, "id" | "title" | "project">;
+
 export type WorkspaceData = {
   items: WorkItem[];
   discovery?: ArtifactDiscovery;
+  linkedThreads?: WorkItemThread[];
 };
 
 /** 保存结果明确返回本次事项，首次自动保存可直接取得新建 ID。 */

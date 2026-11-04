@@ -5,7 +5,7 @@ import { spawn } from "node:child_process";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import net from "node:net";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { setTimeout } from "node:timers/promises";
 import { once } from "node:events";
 
@@ -54,6 +54,7 @@ test(
       assert.ok(ready, diagnostics);
       assert.deepEqual(await (await fetch(`${origin}/api/workspace`)).json(), {
         items: [],
+        linkedThreads: [],
         discovery: {
           artifacts: [],
           unavailableThreadIds: [],
@@ -159,6 +160,7 @@ test(
       assert.equal(added.status, 200);
       const addedData = (await added.json()) as any;
       assert.deepEqual(addedData.item.threadIds, [association.threadId]);
+      assert.deepEqual(addedData.linkedThreads, []);
       assert.equal(addedData.item.title, input.title);
       const repeated = await post("/api/work-items/add-thread", association);
       assert.equal(repeated.status, 200);
@@ -246,8 +248,13 @@ test(
         }),
       );
       const artifactDatabase = new DatabaseSync(join(home, "state_5.sqlite"));
+      artifactDatabase.exec(
+        "ALTER TABLE threads ADD COLUMN name TEXT; ALTER TABLE threads ADD COLUMN archived INTEGER DEFAULT 0",
+      );
       artifactDatabase
-        .prepare("INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)")
+        .prepare(
+          "INSERT INTO threads(id, title, cwd, source, updated_at, rollout_path, name, archived) VALUES (?, ?, ?, ?, ?, ?, '当前归档对话标题', 1)",
+        )
         .run(
           artifactThreadId,
           "Deliverable thread",
@@ -302,6 +309,14 @@ test(
       });
       assert.equal(linkedResponse.status, 200);
       const linked = (await linkedResponse.json()) as any;
+      const linkedThreads = [
+        {
+          id: artifactThreadId,
+          title: "当前归档对话标题",
+          project: basename(home),
+        },
+      ];
+      assert.deepEqual(linked.linkedThreads, linkedThreads);
       assert.deepEqual(linked.discovery, threadDiscovery);
       assert.deepEqual(linked.item.links, manualLinks);
       assert.deepEqual(linked.discovery.unavailableThreadIds, []);
@@ -326,6 +341,7 @@ test(
         await fetch(`${origin}/api/workspace`)
       ).json()) as any;
       assert.deepEqual(discovered.discovery, linked.discovery);
+      assert.deepEqual(discovered.linkedThreads, linkedThreads);
       assert.deepEqual(discovered.items[0].links, manualLinks);
       // 删除前缀后，GitHub、GitLab、原有 MR 和本地方案仍由内置规则识别。
       assert.equal(
@@ -363,6 +379,7 @@ test(
         ).json(),
         {
           items: [],
+          linkedThreads: [],
           discovery: {
             artifacts: [],
             unavailableThreadIds: [],

@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { DatabaseSync } from "node:sqlite";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import net from "node:net";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -159,12 +159,14 @@ for (const packaged of [false, true]) {
         arguments: {},
       });
       assert.deepEqual((read.structuredContent as any).items, items);
+      assert.deepEqual((read.structuredContent as any).linkedThreads, []);
       const threadId = "a0000000-0000-4000-8000-000000000001";
       const associated = await client.callTool({
         name: "taskboard_work_item_add_thread",
         arguments: { id: items[0].id, threadId },
       });
       assert.equal(associated.isError, undefined);
+      assert.deepEqual((associated.structuredContent as any).linkedThreads, []);
       assert.deepEqual((associated.structuredContent as any).item.threadIds, [
         threadId,
       ]);
@@ -299,8 +301,13 @@ for (const packaged of [false, true]) {
       artifactDatabase.exec(
         "CREATE TABLE IF NOT EXISTS threads (id TEXT PRIMARY KEY, title TEXT, cwd TEXT, source TEXT, updated_at INTEGER, rollout_path TEXT)",
       );
+      artifactDatabase.exec(
+        "ALTER TABLE threads ADD COLUMN name TEXT; ALTER TABLE threads ADD COLUMN archived INTEGER DEFAULT 0",
+      );
       artifactDatabase
-        .prepare("INSERT INTO threads VALUES (?, ?, ?, ?, ?, ?)")
+        .prepare(
+          "INSERT INTO threads(id, title, cwd, source, updated_at, rollout_path, name, archived) VALUES (?, ?, ?, ?, ?, ?, '当前归档对话标题', 1)",
+        )
         .run(
           artifactThreadId,
           "Deliverable thread",
@@ -356,6 +363,14 @@ for (const packaged of [false, true]) {
         },
       });
       const linkedData = linked.structuredContent as any;
+      const linkedThreads = [
+        {
+          id: artifactThreadId,
+          title: "当前归档对话标题",
+          project: basename(home),
+        },
+      ];
+      assert.deepEqual(linkedData.linkedThreads, linkedThreads);
       assert.deepEqual(linkedData.discovery, threadDiscovery);
       assert.notEqual(linked.isError, true);
       assert.deepEqual(linkedData.item.links, manualLinks);
@@ -399,6 +414,10 @@ for (const packaged of [false, true]) {
         linkedData.discovery,
       );
       assert.deepEqual(
+        (discovered.structuredContent as any).linkedThreads,
+        linkedThreads,
+      );
+      assert.deepEqual(
         (discovered.structuredContent as any).items[0].links,
         manualLinks,
       );
@@ -407,6 +426,7 @@ for (const packaged of [false, true]) {
         arguments: { id: items[0].id },
       });
       assert.deepEqual((deleted.structuredContent as any).items, []);
+      assert.deepEqual((deleted.structuredContent as any).linkedThreads, []);
     } finally {
       await client.close();
       await new Promise<void>((ok) => unavailable.close(() => ok()));

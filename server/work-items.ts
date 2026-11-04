@@ -104,7 +104,7 @@ export class WorkspaceStore {
             .get(value.id) as { data: string } | undefined)
         : undefined;
       if (value.id && !previous)
-        throw new Error("工作事项不存在，请刷新后重试。");
+        throw new Error("合集不存在，请刷新后重试。");
       const previousItem = previous
         ? (JSON.parse(previous.data) as WorkItem)
         : undefined;
@@ -144,7 +144,7 @@ export class WorkspaceStore {
   addThread(id: string, threadId: string): WorkItemSaveResult {
     workItemThreadInput.parse({ id, threadId });
     if (!existsSync(this.path))
-      throw new Error("工作事项不存在，请刷新后重试。");
+      throw new Error("合集不存在，请刷新后重试。");
     const database = new DatabaseSync(this.path);
     let item: WorkItem;
     try {
@@ -153,14 +153,14 @@ export class WorkspaceStore {
       const row = database
         .prepare("SELECT data FROM work_items WHERE id = ?")
         .get(id) as { data: string } | undefined;
-      if (!row) throw new Error("工作事项不存在，请刷新后重试。");
+      if (!row) throw new Error("合集不存在，请刷新后重试。");
       item = JSON.parse(row.data) as WorkItem;
       item.icon = resolveWorkItemIcon(item);
       item.iconColor = resolveWorkItemIconColor(item);
       // 重复加入不改更新时间；同一操作重试不会产生重复关联。
       if (!item.threadIds.includes(threadId)) {
         if (item.threadIds.length >= 500)
-          throw new RangeError("每个事项最多关联 500 条对话。");
+          throw new RangeError("每个合集最多关联 500 条对话。");
         item = {
           ...item,
           threadIds: [...item.threadIds, threadId],

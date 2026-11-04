@@ -15,6 +15,7 @@ import type {
   DetectedArtifact,
   WorkItem,
   WorkItemInput,
+  WorkItemThread,
   WorkspaceData,
 } from "../shared/work-items";
 import type { WorkReview, WorkSummary } from "../shared/work-review";
@@ -55,7 +56,7 @@ const runtimeLabels = {
   error: "执行异常",
   unknown: "状态待同步",
 } as const;
-/** 新事项一次确定图标和配色，后续自动保存沿用同一组选择。 */
+/** 新合集一次确定图标和配色，后续自动保存沿用同一组选择。 */
 const blankItem = (): WorkItemInput => {
   const icon = randomWorkItemIcon();
   return {
@@ -74,7 +75,7 @@ const emptyDiscovery: ArtifactDiscovery = {
   unavailableThreadIds: [],
 };
 
-/** 同一事项中的相同成果只显示一次，并保留手工补充的链接。 */
+/** 同一合集中的相同成果只显示一次，并保留手工补充的链接。 */
 function itemArtifacts(
   discovery: ArtifactDiscovery,
   item: WorkItemInput,
@@ -93,7 +94,7 @@ function itemArtifacts(
 
 /** 输入未完成时保留草稿，避免把无效内容发给保存接口。 */
 function draftProblem(input: WorkItemInput): string {
-  if (!input.title.trim()) return "请填写事项名称后自动保存。";
+  if (!input.title.trim()) return "请填写合集名称后自动保存。";
   for (const link of input.links) {
     if (!link.label.trim()) return "请补全成果名称后自动保存。";
     try {
@@ -116,7 +117,7 @@ const emptySummary: WorkSummary = {
   unknownDuration: 0,
 };
 
-/** 管理插件自己的事项、对话关联和验收记录。 */
+/** 管理插件自己的合集、对话关联和验收记录。 */
 export function WorkItems({
   active,
   threads,
@@ -134,6 +135,7 @@ export function WorkItems({
 }) {
   const { t, locale } = useI18n();
   const [items, setItems] = useState<WorkItem[]>([]);
+  const [linkedThreads, setLinkedThreads] = useState<WorkItemThread[]>([]);
   const [discovery, setDiscovery] = useState<ArtifactDiscovery>(emptyDiscovery);
   const [loading, setLoading] = useState(true);
   const [loaded, setLoaded] = useState(false);
@@ -160,6 +162,18 @@ export function WorkItems({
     () => new Map(threads.map((thread) => [thread.id, thread])),
     [threads],
   );
+  const availableById = useMemo(
+    // 关联摘要补齐旧对话和归档对话，当前快照的标题优先。
+    () =>
+      new Map(
+        [...linkedThreads, ...threads].map((thread) => [thread.id, thread]),
+      ),
+    [linkedThreads, threads],
+  );
+  const availableThreads = useMemo(
+    () => [...availableById.values()],
+    [availableById],
+  );
 
   useEffect(() => {
     if (!active) return;
@@ -174,7 +188,7 @@ export function WorkItems({
         return;
       }
       refreshing = true;
-      // 刷新时保留已有事项和成果，只更新读取状态。
+      // 刷新时保留已有合集和成果，只更新读取状态。
       setLoading(true);
       if (!background) {
         setError("");
@@ -198,6 +212,7 @@ export function WorkItems({
               }
             }
             setItems(data.items);
+            setLinkedThreads(data.linkedThreads ?? []);
             onChanged?.(data);
             setDiscovery(data.discovery ?? emptyDiscovery);
             setLoaded(true);
@@ -206,7 +221,7 @@ export function WorkItems({
         .catch((reason) => {
           if (!cancelled)
             setError(
-              reason instanceof Error ? reason.message : "读取工作事项失败",
+              reason instanceof Error ? reason.message : "读取合集失败",
             );
         })
         .finally(() => {
@@ -248,6 +263,7 @@ export function WorkItems({
         try {
           const data = await saveWorkItem(input);
           setItems(data.items);
+          setLinkedThreads(data.linkedThreads ?? []);
           onChanged?.(data);
           setDiscovery(data.discovery ?? emptyDiscovery);
           setLoaded(true);
@@ -262,7 +278,7 @@ export function WorkItems({
           }
         } catch (reason) {
           setSaveProblem(
-            reason instanceof Error ? reason.message : "保存工作事项失败",
+            reason instanceof Error ? reason.message : "保存合集失败",
           );
           setSaveState("error");
           return false;
@@ -300,13 +316,13 @@ export function WorkItems({
     setNotice("");
   }
 
-  // 从对话卡片的事项标签进入时，直接打开对应事项，不要求重新搜索。
+  // 从对话卡片的合集标签进入时，直接打开对应合集，不要求重新搜索。
   useEffect(() => {
     if (active && openItem)
       void openEditor(openItem).then(() => onItemOpened?.());
   }, [active, openItem?.id]);
 
-  /** 删除事项时保留原对话，只更新插件中的组织记录。 */
+  /** 删除合集时保留原对话，只更新插件中的组织记录。 */
   async function remove(id: string) {
     if (!(await save())) return;
     setDeleting(id);
@@ -314,6 +330,7 @@ export function WorkItems({
     try {
       const data = await deleteWorkItem(id);
       setItems(data.items);
+      setLinkedThreads(data.linkedThreads ?? []);
       onChanged?.(data);
       setDiscovery(data.discovery ?? emptyDiscovery);
       setLoaded(true);
@@ -322,9 +339,9 @@ export function WorkItems({
         setDraft(null);
       }
       setConfirmDelete(null);
-      setNotice("工作事项已删除");
+      setNotice("合集已删除");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "删除工作事项失败");
+      setError(reason instanceof Error ? reason.message : "删除合集失败");
     } finally {
       setDeleting(null);
     }
@@ -338,10 +355,10 @@ export function WorkItems({
         .includes(query.trim().toLocaleLowerCase()),
   );
   return (
-    <section className="workspace-panel" aria-label={t("工作事项")}>
+    <section className="workspace-panel" aria-label={t("合集")}>
       <div className="workspace-heading">
         <div>
-          <h1>{t("工作事项")}</h1>
+          <h1>{t("合集")}</h1>
           <p>{t("把相关对话放在一起，记录验收清单和成果。")}</p>
         </div>
         <div className="workspace-actions">
@@ -357,9 +374,8 @@ export function WorkItems({
           <Button
             icon={<Plus size={14} />}
             onClick={() => void openEditor(blankItem())}
-            disabled={draft !== null}
           >
-            {t("新建事项")}
+            {t("新建合集")}
           </Button>
         </div>
       </div>
@@ -378,14 +394,14 @@ export function WorkItems({
           <div className="workspace-filters">
             <input
               className="workspace-input"
-              aria-label={t("搜索事项")}
-              placeholder={t("搜索事项…")}
+              aria-label={t("搜索合集")}
+              placeholder={t("搜索合集…")}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
             <select
               className="workspace-input"
-              aria-label={t("事项状态")}
+              aria-label={t("合集状态")}
               value={stateFilter}
               onChange={(event) => setStateFilter(event.target.value)}
             >
@@ -401,7 +417,7 @@ export function WorkItems({
             <div className="workspace-empty">
               {loading ? (
                 <ThinkingLoader
-                  phases={[t("正在读取工作事项与关联成果…")]}
+                  phases={[t("正在读取合集与关联成果…")]}
                   phase={0}
                 />
               ) : (
@@ -412,7 +428,7 @@ export function WorkItems({
             <div className="workspace-empty">
               <ClipboardList size={30} />
               <h2>
-                {t(items.length ? "没有匹配的事项" : "创建第一个工作事项")}
+                {t(items.length ? "没有匹配的合集" : "创建第一个合集")}
               </h2>
               <p>
                 {t(
@@ -439,7 +455,7 @@ export function WorkItems({
                   className="work-card"
                   key={item.id}
                   tabIndex={0}
-                  aria-label={t("编辑事项：{title}", { title: item.title })}
+                  aria-label={t("编辑合集：{title}", { title: item.title })}
                   aria-current={draft?.id === item.id ? "true" : undefined}
                   onClick={(event) => {
                     if ((event.target as Element).closest("button, a")) return;
@@ -514,7 +530,8 @@ export function WorkItems({
                             }
                           >
                             <span>
-                              {thread?.title ?? t("未加载的关联对话")}
+                              {availableById.get(id)?.title ??
+                                t("关联对话暂不可用")}
                             </span>
                             <small>
                               {thread
@@ -541,7 +558,7 @@ export function WorkItems({
                   <DetectedArtifacts
                     artifacts={itemArtifacts(discovery, item)}
                     links={item.links}
-                    threads={threads}
+                    threads={availableThreads}
                     onError={setError}
                   />
                   <div className="work-card-footer">
@@ -553,7 +570,7 @@ export function WorkItems({
                       {confirmDelete === item.id ? (
                         <>
                           <span className="workspace-hint">
-                            {t("确认删除事项？")}
+                            {t("确认删除合集？")}
                           </span>
                           <Button
                             variant="ghost"
@@ -577,7 +594,7 @@ export function WorkItems({
                             variant="ghost"
                             size="sm"
                             icon={<Trash2 size={13} />}
-                            aria-label={t("删除事项：{title}", {
+                            aria-label={t("删除合集：{title}", {
                               title: item.title,
                             })}
                             disabled={deleting !== null}
@@ -597,7 +614,7 @@ export function WorkItems({
             key={editorKey}
             draft={draft}
             setDraft={updateDraft}
-            threads={threads}
+            threads={availableThreads}
             artifacts={itemArtifacts(discovery, draft)}
             artifactsLoading={
               draft.threadIds.length > 0 &&
@@ -626,7 +643,7 @@ export function WorkItems({
   );
 }
 
-/** 编辑事项及关联记录，保留当前快照中暂未加载的对话。 */
+/** 编辑合集及关联记录，同时展示按绑定 ID 读取的对话。 */
 function ItemEditor({
   draft,
   setDraft,
@@ -642,7 +659,7 @@ function ItemEditor({
 }: {
   draft: WorkItemInput;
   setDraft: (draft: WorkItemInput) => void;
-  threads: Thread[];
+  threads: WorkItemThread[];
   artifacts: DetectedArtifact[];
   artifactsLoading: boolean;
   unavailableArtifacts: number;
@@ -657,11 +674,15 @@ function ItemEditor({
   const [checkText, setCheckText] = useState("");
   const byId = new Map(threads.map((thread) => [thread.id, thread]));
   const selected = new Set(draft.threadIds);
-  const options = threads.filter((thread) =>
-    `${thread.title} ${thread.project}`
-      .toLocaleLowerCase()
-      .includes(threadQuery.trim().toLocaleLowerCase()),
-  );
+  const options = threads
+    .filter((thread) =>
+      `${thread.title} ${thread.project}`
+        .toLocaleLowerCase()
+        .includes(threadQuery.trim().toLocaleLowerCase()),
+    )
+    // 已绑定的对话排在前面，避免自动补齐后落到选择列表的截断范围外。
+    .sort((a, b) => Number(selected.has(b.id)) - Number(selected.has(a.id)));
+  const optionLimit = Math.max(100, selected.size);
   const missing = draft.threadIds.filter((id) => !byId.has(id));
   const update = (patch: Partial<WorkItemInput>) =>
     setDraft({ ...draft, ...patch });
@@ -678,7 +699,7 @@ function ItemEditor({
   return (
     <aside
       className="work-editor"
-      aria-label={t(draft.id ? "编辑事项" : "新建事项")}
+      aria-label={t(draft.id ? "编辑合集" : "新建合集")}
     >
       <form
         onSubmit={(event) => {
@@ -688,7 +709,7 @@ function ItemEditor({
         onBlur={() => void onSave()}
       >
         <div className="work-card-heading">
-          <h2>{t(draft.id ? "编辑事项" : "新建事项")}</h2>
+          <h2>{t(draft.id ? "编辑合集" : "新建合集")}</h2>
           <Button
             variant="ghost"
             icon={<X size={15} />}
@@ -704,7 +725,7 @@ function ItemEditor({
             onColorChange={(iconColor) => update({ iconColor })}
           />
           <label>
-            {t("事项名称")}
+            {t("合集名称")}
             <input
               className="workspace-input"
               required
@@ -726,7 +747,7 @@ function ItemEditor({
             />
           </label>
           <label>
-            {t("事项状态")}
+            {t("合集状态")}
             <select
               className="workspace-input"
               value={draft.status}
@@ -742,7 +763,7 @@ function ItemEditor({
             </select>
           </label>
           <p className="workspace-hint">
-            {t("事项状态由你更新；对话空闲不代表已经验收。")}
+            {t("合集状态由你更新；对话空闲不代表已经验收。")}
           </p>
           <div className="editor-section">
             <h3>
@@ -770,12 +791,12 @@ function ItemEditor({
                     }
                   />
                   <span>
-                    {t("未加载的关联对话")}
+                    {t("关联对话暂不可用")}
                     <small>{id}</small>
                   </span>
                 </label>
               ))}
-              {options.slice(0, 100).map((thread) => (
+              {options.slice(0, optionLimit).map((thread) => (
                 <label className="thread-option" key={thread.id}>
                   <input
                     type="checkbox"
@@ -799,7 +820,7 @@ function ItemEditor({
               {!options.length && !missing.length && (
                 <p className="workspace-hint">{t("没有匹配的对话")}</p>
               )}
-              {options.length > 100 && (
+              {options.length > optionLimit && (
                 <p className="workspace-hint">{t("请搜索以缩小对话范围。")}</p>
               )}
             </div>
@@ -1042,7 +1063,7 @@ export function WorkReviewPanel({ active }: { active: boolean }) {
       .catch((reason) => {
         if (!controller.signal.aborted)
           setError(
-            reason instanceof Error ? reason.message : "读取工作回顾失败",
+            reason instanceof Error ? reason.message : "读取回顾失败",
           );
       })
       .finally(() => {
@@ -1079,7 +1100,7 @@ export function WorkReviewPanel({ active }: { active: boolean }) {
         );
     } catch (reason) {
       if (!controller.signal.aborted)
-        setError(reason instanceof Error ? reason.message : "读取工作回顾失败");
+        setError(reason instanceof Error ? reason.message : "读取回顾失败");
     } finally {
       if (!controller.signal.aborted) setLoadingMore(false);
     }
@@ -1094,10 +1115,10 @@ export function WorkReviewPanel({ active }: { active: boolean }) {
   const knownTokens = summary.turns - summary.unknownTokens;
   const knownDuration = summary.turns - summary.unknownDuration;
   return (
-    <section className="workspace-panel" aria-label={t("工作回顾")}>
+    <section className="workspace-panel" aria-label={t("回顾")}>
       <div className="workspace-heading">
         <div>
-          <h1>{t("工作回顾")}</h1>
+          <h1>{t("回顾")}</h1>
           <p>{t("只统计有用户输入记录的主对话回合，包含已归档对话。")}</p>
         </div>
         <Button

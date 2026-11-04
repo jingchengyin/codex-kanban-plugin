@@ -281,7 +281,7 @@ function Board() {
     media.addEventListener("change", update);
     return () => media.removeEventListener("change", update);
   }, []);
-  // 卡片和事项页共用最新关联结果，切回看板后重新读取持久化记录。
+  // 卡片和合集页共用最新关联结果，切回看板后重新读取持久化记录。
   useEffect(() => {
     if (view !== "board") return;
     let cancelled = false;
@@ -296,7 +296,7 @@ function Board() {
       } catch (error) {
         if (!cancelled)
           setWorkspaceError(
-            error instanceof Error ? error.message : "读取工作事项失败",
+            error instanceof Error ? error.message : "读取合集失败",
           );
       } finally {
         if (!cancelled) timer = setTimeout(() => void refreshItems(), 15000);
@@ -577,9 +577,9 @@ function Board() {
           >
             {(
               [
-                ["board", "对话看板"],
-                ["items", "工作事项"],
-                ["review", "工作回顾"],
+                ["board", "看板"],
+                ["items", "合集"],
+                ["review", "回顾"],
               ] as const
             ).map(([id, label]) => (
               <button
@@ -662,7 +662,7 @@ function Board() {
                 <input
                   ref={search}
                   aria-label={t("搜索对话")}
-                  placeholder={t("搜索标题、输入或事项…")}
+                  placeholder={t("搜索标题、输入或合集…")}
                   value={query}
                   onChange={(e) => setQuery(e.target.value)}
                 />
@@ -920,7 +920,7 @@ function Board() {
         >
           <WorkItems
             active={view === "items"}
-            threads={threads}
+            threads={boardThreads}
             artifactRevision={artifactRevision}
             onChanged={updateWorkspace}
             openItem={workItems.find((item) => item.id === openItemId) ?? null}
@@ -1034,7 +1034,7 @@ function Board() {
           </p>
           <div className="data-boundary">
             <ShieldCheck size={16} />
-            <span>{t("本机对话与事项 · 确认操作仅在点击后提交")}</span>
+            <span>{t("本机对话与合集 · 确认操作仅在点击后提交")}</span>
           </div>
         </Modal>
       )}
@@ -1067,7 +1067,7 @@ type CardActions = {
   onOpenItem: (id: string) => void;
 };
 
-/** 卡片在看板和紧凑列表中共用跳转、待处理信息和事项关联入口。 */
+/** 卡片在看板和紧凑列表中共用跳转、待处理信息和合集关联入口。 */
 function ThreadCard({
   thread,
   compact = false,

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import type { Thread, ThreadLink } from "../shared/types.js";
+import type { WorkItemThread } from "../shared/work-items.js";
 import { TurnUsageReader } from "./turn-usage.js";
 
 const turnUsageReader = new TurnUsageReader();
@@ -52,7 +53,7 @@ export type LocalData = {
   unreadOptions: ReadState["options"];
 };
 
-/** 卡片和监听引用使用相同的对话类型规则，排除内部子 Agent。 */
+/** 卡片、关联摘要和监听引用使用相同的对话类型规则，排除内部子 Agent。 */
 function threadKind(row: {
   agent_role?: unknown;
   source?: unknown;
@@ -60,7 +61,9 @@ function threadKind(row: {
 }): Thread["kind"] {
   return row.agent_role ||
     (typeof row.source === "string" && row.source.includes("subagent")) ||
-    row.thread_source === "agent"
+    row.thread_source === "agent" ||
+    row.thread_source === "subagent" ||
+    row.thread_source === "guardian_review"
     ? "agent"
     : row.thread_source === "user" || row.source === "vscode"
       ? "user"
@@ -97,6 +100,50 @@ export function displayTitle(name: unknown, fallback: unknown): string {
   return [...value].length > 120
     ? [...value].slice(0, 120).join("") + "…"
     : value || "未命名对话";
+}
+
+/** 按绑定 ID 读取当前标题，包含已归档和最近 500 条以外的对话。 */
+export function readLinkedThreads(
+  home: string,
+  threadIds: string[],
+): WorkItemThread[] {
+  if (!threadIds.length) return [];
+  let database: DatabaseSync | undefined;
+  try {
+    database = new DatabaseSync(join(home, "state_5.sqlite"), {
+      readOnly: true,
+    });
+    const columns = new Set(
+      database
+        .prepare("PRAGMA table_info(threads)")
+        .all()
+        .map((column) => column.name),
+    );
+    const fields = ["name", "source", "thread_source", "agent_role"]
+      .map((name) => (columns.has(name) ? name : `NULL AS ${name}`))
+      .join(", ");
+    // 只按明确绑定的 ID 查索引，不扫描对话正文或加载运行态。
+    const find = database.prepare(
+      `SELECT id, title, ${fields}, cwd FROM threads WHERE id = ?`,
+    );
+    const threads: WorkItemThread[] = [];
+    for (const id of new Set(threadIds)) {
+      const row = find.get(id);
+      // 已有关联也必须排除内部子 Agent，避免从摘要重新混入选择列表。
+      if (row && threadKind(row) !== "agent")
+        threads.push({
+          id: String(row.id),
+          title: displayTitle(row.name, row.title),
+          project: basename(String(row.cwd || "")) || "未归属项目",
+        });
+    }
+    return threads;
+  } catch {
+    // 索引缺失时仍可读取、编辑事项，界面保留原来的缺失对话提示。
+    return [];
+  } finally {
+    database?.close();
+  }
 }
 
 /** 读取客户端未读状态，自动模式优先复用普通启动记录。 */

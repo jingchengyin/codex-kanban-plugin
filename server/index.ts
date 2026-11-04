@@ -6,6 +6,7 @@ import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { OpenAIExtensions } from "@openai/mcp-extensions/server";
 import { z } from "zod";
 import { StatusBridge } from "./status-bridge.js";
+import { readLinkedThreads } from "./local-data.js";
 import {
   WorkspaceStore,
   workItemInput,
@@ -32,9 +33,13 @@ const icon =
 const bridge = new StatusBridge();
 const workspace = new WorkspaceStore(bridge.home);
 const artifacts = new ThreadArtifactIndex(bridge.home);
-/** 事项只聚合统一对话成果索引，不再自行扫描关联历史记录。 */
+/** 合集只聚合统一对话成果索引，不再自行扫描关联历史记录。 */
 const discover = async <T extends WorkspaceData>(data: T) => ({
   ...data,
+  linkedThreads: readLinkedThreads(
+    bridge.home,
+    data.items.flatMap((item) => item.threadIds),
+  ),
   discovery: await artifacts.read(data.items.flatMap((item) => item.threadIds)),
 });
 bridge.start();
@@ -151,7 +156,7 @@ const handle = serveStdio(
       },
       (args) => snapshot(args),
     );
-    // 工作台接口只供插件界面调用，事项保存到独立的插件数据库。
+    // 工作台接口只供插件界面调用，合集保存到独立的插件数据库。
     const appMeta = { ui: { resourceUri: uri, visibility: ["app"] } };
     const result = (data: object) => ({
       content: [
@@ -221,8 +226,8 @@ const handle = serveStdio(
       "taskboard_workspace",
       {
         ...base,
-        title: "读取工作事项",
-        description: "读取插件保存的工作事项、关联对话与验收清单。",
+        title: "读取合集",
+        description: "读取插件保存的合集、关联对话与验收清单。",
         _meta: appMeta,
       },
       async () => result(await discover(workspace.read())),
@@ -232,8 +237,8 @@ const handle = serveStdio(
       {
         ...base,
         inputSchema: workItemInput,
-        title: "保存工作事项",
-        description: "保存用户在插件中编辑的事项、验收清单和成果链接。",
+        title: "保存合集",
+        description: "保存用户在插件中编辑的合集、验收清单和成果链接。",
         annotations: { ...base.annotations, readOnlyHint: false },
         _meta: appMeta,
       },
@@ -244,8 +249,8 @@ const handle = serveStdio(
       {
         ...base,
         inputSchema: workItemThreadInput,
-        title: "关联对话到事项",
-        description: "把当前对话加入已有事项，保留事项最新的说明和验收记录。",
+        title: "关联对话到合集",
+        description: "把当前对话加入已有合集，保留合集最新的说明和验收记录。",
         annotations: {
           ...base.annotations,
           readOnlyHint: false,
@@ -261,8 +266,8 @@ const handle = serveStdio(
       {
         ...base,
         inputSchema: z.object({ id: z.string().uuid() }),
-        title: "删除工作事项",
-        description: "删除插件中的工作事项记录。",
+        title: "删除合集",
+        description: "删除插件中的合集记录。",
         annotations: {
           ...base.annotations,
           readOnlyHint: false,

@@ -248,7 +248,7 @@ export async function readWorkReview(
   signal?.addEventListener("abort", cancel, { once: true });
   if (signal?.aborted) cancel();
   const timer = setTimeout(
-    () => controller.abort(new Error("读取工作回顾超时，请重试。")),
+    () => controller.abort(new Error("读取回顾超时，请重试。")),
     30000,
   );
   let abort: () => void = () => {};

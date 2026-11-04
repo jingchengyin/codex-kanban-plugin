@@ -1,6 +1,6 @@
 import { useId, useState } from "react";
 import { ExternalLink, FileText, GitPullRequest } from "lucide-react";
-import type { Thread } from "../shared/types";
+import type { ThreadLink } from "../shared/types";
 import type { DetectedArtifact, WorkItem } from "../shared/work-items";
 import { openArtifactLink, openConversation, openDetectedFile } from "./client";
 import { useI18n } from "./i18n";
@@ -15,7 +15,7 @@ export function DetectedArtifacts({
 }: {
   artifacts: DetectedArtifact[];
   links?: WorkItem["links"];
-  threads: Thread[];
+  threads: ThreadLink[];
   onError: (message: string) => void;
   showSource?: boolean;
 }) {

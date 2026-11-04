@@ -158,7 +158,7 @@ const colorLabels = {
   slate: "灰蓝色",
 } as const;
 
-/** 看板标签和事项列表共用图标及配色，旧事项自动使用默认颜色。 */
+/** 看板标签和合集列表共用图标及配色，旧合集自动使用默认颜色。 */
 export function WorkItemIcon({
   icon,
   color,
@@ -228,14 +228,14 @@ export function WorkItemIconPicker({
       }}
     >
       <summary
-        aria-label={t("选择事项图标")}
+        aria-label={t("选择合集图标")}
         aria-disabled={disabled || undefined}
         onClick={(event) => {
           if (disabled) event.preventDefault();
         }}
       >
         <WorkItemIcon icon={value} color={color} size={18} />
-        <span>{t("事项图标")}</span>
+        <span>{t("合集图标")}</span>
         <ChevronDown size={13} aria-hidden="true" />
       </summary>
       <div className="work-item-icon-panel">
@@ -280,7 +280,7 @@ export function WorkItemIconPicker({
         <div
           className="work-item-icon-options"
           role="group"
-          aria-label={t("事项图标")}
+          aria-label={t("合集图标")}
         >
           {displayed.map((icon) => (
             <button
