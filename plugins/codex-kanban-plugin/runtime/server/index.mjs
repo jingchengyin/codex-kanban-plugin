@@ -54450,7 +54450,10 @@ var html = readFileSync(
 );
 var uri2 = `ui://codex-taskboard/board-${createHash4("sha256").update(html).digest("hex").slice(0, 16)}.html`;
 var icon = "data:image/svg+xml," + encodeURIComponent(
-  '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#6c7660" stroke-width="1.33"><rect x="2.5" y="3" width="15" height="14" rx="3"/><path d="M7.5 3v14M12.5 3v14M4.5 6h1M9.5 6h1M14.5 6h1M4.5 9h1M9.5 9h1"/></svg>'
+  readFileSync(
+    fileURLToPath3(new URL("../../assets/icon.svg", import.meta.url)),
+    "utf8"
+  )
 );
 var bridge = new StatusBridge();
 var workspace = new WorkspaceStore(bridge.home);

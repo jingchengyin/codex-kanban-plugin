@@ -25,10 +25,14 @@ const html = readFileSync(
 );
 // 宿主按资源地址缓存页面；HTML 变化时自动换地址，避免继续展示旧界面。
 const uri = `ui://codex-taskboard/board-${createHash("sha256").update(html).digest("hex").slice(0, 16)}.html`;
+// 插件列表和工具入口共用正式图标，更新时只需维护一份 SVG。
 const icon =
   "data:image/svg+xml," +
   encodeURIComponent(
-    '<svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="#6c7660" stroke-width="1.33"><rect x="2.5" y="3" width="15" height="14" rx="3"/><path d="M7.5 3v14M12.5 3v14M4.5 6h1M9.5 6h1M14.5 6h1M4.5 9h1M9.5 9h1"/></svg>',
+    readFileSync(
+      fileURLToPath(new URL("../../assets/icon.svg", import.meta.url)),
+      "utf8",
+    ),
   );
 const bridge = new StatusBridge();
 const workspace = new WorkspaceStore(bridge.home);

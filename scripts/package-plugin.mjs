@@ -12,10 +12,11 @@ const catalog = JSON.parse(
 );
 const plugin = resolve(root, "plugins", pkg.name);
 await rm(plugin, { recursive: true, force: true });
-await mkdir(plugin, { recursive: true });
+await mkdir(resolve(plugin, "assets"), { recursive: true });
+// 发布包只包含正式图标，候选设计保留在本地供选择。
 for (const path of [
   ".codex-plugin",
-  "assets",
+  "assets/icon.svg",
   "README.md",
   "README.zh.md",
   "LICENSE",
@@ -53,6 +54,7 @@ mcp.mcpServers["codex-taskboard"].env = {
   TASKBOARD_BUILD_ID: createHash("sha256")
     .update(await readFile(resolve(plugin, "runtime/server/index.mjs")))
     .update(await readFile(resolve(plugin, "runtime/ui/index.html")))
+    .update(await readFile(resolve(plugin, "assets/icon.svg")))
     .digest("hex"),
 };
 await writeFile(
