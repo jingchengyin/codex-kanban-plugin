@@ -218,6 +218,7 @@ export function parseUnread(
   }
 }
 
+/** 读取最近的普通对话，并补齐所选来源中尚未归档的未读对话。 */
 export async function readLocalData(
   home: string,
   selection: string | null = null,
@@ -256,11 +257,28 @@ export async function readLocalData(
     const rollout = columns.has("rollout_path")
       ? "rollout_path"
       : "NULL AS rollout_path";
-    const rows = database
+    const fields = `id, title, ${name}, ${model}, ${effort}, ${rollout}, cwd, updated_at, source, ${kind}, ${role}`;
+    const rows: any[] = [];
+    // 先按既有规则排除内部子 Agent，再计算最近 500 条，避免挤掉用户对话。
+    for (const row of database
       .prepare(
-        `SELECT id, title, ${name}, ${model}, ${effort}, ${rollout}, cwd, updated_at, source, ${kind}, ${role} FROM threads WHERE archived=0 ORDER BY updated_at DESC LIMIT 500`,
+        `SELECT ${fields} FROM threads WHERE archived=0 ORDER BY updated_at DESC`,
       )
-      .all() as any[];
+      .iterate()) {
+      if (threadKind(row) !== "user") continue;
+      rows.push(row);
+      if (rows.length === 500) break;
+    }
+    // 手动标为未读不会更新对话时间；按 ID 补齐，不扩大正文扫描范围。
+    const recentIds = new Set(rows.map((row) => row.id));
+    const findUnread = database.prepare(
+      `SELECT ${fields} FROM threads WHERE id = ? AND archived=0`,
+    );
+    for (const id of unread.ids ?? []) {
+      if (recentIds.has(id)) continue;
+      const row = findUnread.get(id);
+      if (row && threadKind(row) === "user") rows.push(row);
+    }
     const threads: Thread[] = rows.map((row) => ({
       id: String(row.id),
       title: displayTitle(row.name, row.title),

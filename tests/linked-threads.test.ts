@@ -129,10 +129,9 @@ test("linked conversations exclude child agents from each supported source marke
       { id: "archived-user", title: "归档用户对话", project: "project" },
     ]);
     const board = await readLocalData(home);
-    assert.ok(
-      board.threads
-        .filter((thread) => thread.id !== "user")
-        .every((thread) => thread.kind === "agent"),
+    assert.deepEqual(
+      board.threads.map((thread) => thread.id),
+      ["user"],
     );
   } finally {
     database.close();

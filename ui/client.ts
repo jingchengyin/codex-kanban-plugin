@@ -24,7 +24,7 @@ let previewOpened = false;
 export function connect(): Promise<void> {
   if (ready) return ready;
   if (window.parent === window) return (ready = Promise.resolve());
-  app = new App({ name: "Codex Taskboard", version: "0.2.2" });
+  app = new App({ name: "Codex Taskboard", version: "0.2.3" });
   extensions = new OpenAIExtensions(app);
   app.ontoolresult = (result) => {
     if (validSnapshot(result.structuredContent))

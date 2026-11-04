@@ -276,8 +276,8 @@ test("local metadata resolves both directions with current titles and excludes s
         { id: id(1), title: "验收多 Agent Runtime 模型能力" },
         { id: id(6), title: "另一位监听者" },
       ]);
-      assert.deepEqual(byId.get(id(3))?.monitoring, []);
-      assert.deepEqual(byId.get(id(4))?.monitoring, []);
+      assert.equal(byId.has(id(3)), false);
+      assert.equal(byId.has(id(4)), false);
 
       db.prepare("UPDATE threads SET name=? WHERE id=?").run(
         "Trae 新标题",

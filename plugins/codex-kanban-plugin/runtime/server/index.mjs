@@ -51608,9 +51608,24 @@ async function readLocalData(home, selection = null) {
     const model = columns.has("model") ? "model" : "NULL AS model";
     const effort = columns.has("reasoning_effort") ? "reasoning_effort" : "NULL AS reasoning_effort";
     const rollout = columns.has("rollout_path") ? "rollout_path" : "NULL AS rollout_path";
-    const rows = database.prepare(
-      `SELECT id, title, ${name}, ${model}, ${effort}, ${rollout}, cwd, updated_at, source, ${kind}, ${role} FROM threads WHERE archived=0 ORDER BY updated_at DESC LIMIT 500`
-    ).all();
+    const fields = `id, title, ${name}, ${model}, ${effort}, ${rollout}, cwd, updated_at, source, ${kind}, ${role}`;
+    const rows = [];
+    for (const row of database.prepare(
+      `SELECT ${fields} FROM threads WHERE archived=0 ORDER BY updated_at DESC`
+    ).iterate()) {
+      if (threadKind(row) !== "user") continue;
+      rows.push(row);
+      if (rows.length === 500) break;
+    }
+    const recentIds = new Set(rows.map((row) => row.id));
+    const findUnread = database.prepare(
+      `SELECT ${fields} FROM threads WHERE id = ? AND archived=0`
+    );
+    for (const id of unread.ids ?? []) {
+      if (recentIds.has(id)) continue;
+      const row = findUnread.get(id);
+      if (row && threadKind(row) === "user") rows.push(row);
+    }
     const threads = rows.map((row) => ({
       id: String(row.id),
       title: displayTitle(row.name, row.title),
@@ -54478,7 +54493,7 @@ var handle = serveStdio(
   () => {
     const server = new McpServer({
       name: "codex-taskboard",
-      version: "0.2.2",
+      version: "0.2.3",
       icons: [{ src: icon, mimeType: "image/svg+xml" }]
     });
     new OpenAIExtensions(server);
