@@ -1,4 +1,4 @@
-# Codex 重度患者福音，原生插件看板管理并发对话
+# Codex 重度患者福音！原生插件看板管理并发对话，组织对话合集
 
 ## 场景一
 
@@ -35,9 +35,12 @@ GitHub 地址：[jingchengyin/codex-kanban-plugin](https://github.com/jingchengy
 
 ### 看板
 
+![看板示例图](assets/example-image/kanban.png)
+
+
 看板按状态分列：
 
-- 需要输入
+- 需要你处理
 - 正在运行
 - 未读（对话已完成但还未读）
 - 空闲（对话已完成且已经完成）
@@ -46,6 +49,7 @@ GitHub 地址：[jingchengyin/codex-kanban-plugin](https://github.com/jingchengy
 看板上展示的信息包括：
 
 - 所属文件夹
+- 使用的分支/worktree
 - 模型和思考强度
 - 计划模式
 - 目标模式
