@@ -42,7 +42,7 @@ function fixture(state: any = {}) {
       cwd: "/work/kanban",
       requests: [],
       threadRuntimeStatus: { type: "idle" },
-      turns: [{ turnId: "question-turn", status: "completed", items: [item] }],
+      turns: [{ turnId: "question-turn", status: "inProgress", items: [item] }],
       ...state,
     },
   };
@@ -74,18 +74,12 @@ function fixture(state: any = {}) {
     },
     first: () => confirmations.read().requests[0],
     echo(type = "userMessage", status?: string, text = replyText()) {
-      conversation.state.turns.push({
-        turnId: "reply-turn",
-        status: "inProgress",
-        items: [
-          {
-            id: "reply-message",
-            type,
-            ...(status ? { status } : {}),
-            [type === "steeringUserMessage" ? "input" : "content"]: [
-              { type: "text", text },
-            ],
-          },
+      conversation.state.turns.at(-1).items.push({
+        id: "reply-message",
+        type,
+        ...(status ? { status } : {}),
+        [type === "steeringUserMessage" ? "input" : "content"]: [
+          { type: "text", text },
         ],
       });
       conversation.revision++;
@@ -152,12 +146,18 @@ test("async questions merge ordered canonical history with sparse live turns", (
   assert.deepEqual(f.confirmations.read().requests, []);
 });
 
-test("cancelled question turns remove async cards and reject their old IDs before sending", async () => {
-  for (const status of ["interrupted", "failed"]) {
+test("ended question turns remove async cards and reject their old IDs before sending", async () => {
+  for (const status of ["completed", "interrupted", "failed"]) {
     const f = fixture();
     const pending = f.first();
     assert.ok(pending);
     f.conversation.state.turns[0].status = status;
+    f.conversation.state.turns[0].items.push({
+      id: "final-answer",
+      type: "agentMessage",
+      phase: "final_answer",
+      text: "The clarification card is ready.",
+    });
     f.conversation.revision++;
     assert.deepEqual(f.confirmations.read().requests, []);
     await assert.rejects(
@@ -172,7 +172,7 @@ test("cancelled question turns remove async cards and reject their old IDs befor
   }
 });
 
-test("an ordinary user message in the next turn clears earlier async questions", () => {
+test("the latest active turn without questions does not fall back to old questions", () => {
   for (const status of ["completed", "inProgress"]) {
     const f = fixture({
       turns: [
@@ -180,7 +180,7 @@ test("an ordinary user message in the next turn clears earlier async questions",
         {
           turnId: "new-turn",
           status: "inProgress",
-          items: [{ type: "userMessage", content: [] }],
+          items: [],
         },
       ],
     });
@@ -188,7 +188,7 @@ test("an ordinary user message in the next turn clears earlier async questions",
   }
 });
 
-test("new user input clears old questions while automatic completion keeps the new questions", () => {
+test("async cards expose only the latest active questions and ignore subsequent completed questions", () => {
   const latestItem = {
     ...item,
     id: "latest-question",
@@ -200,9 +200,13 @@ test("new user input clears old questions while automatic completion keeps the n
       {
         turnId: "new-turn",
         status: "inProgress",
-        items: [{ type: "userMessage", content: [] }, latestItem],
+        items: [latestItem],
       },
-      { turnId: "automatic-turn", status: "completed", items: [] },
+      {
+        turnId: "automatic-turn",
+        status: "completed",
+        items: [{ ...item, id: "completed-question" }],
+      },
     ],
   });
   assert.deepEqual(
@@ -365,8 +369,20 @@ test("a completed turn confirms submitted answers only when desktop history cont
     const pending = f.first();
     assert.ok(pending);
     f.onSend(async () => {
-      if (echoed) f.echo();
-      f.conversation.state.turns.at(-1).status = "completed";
+      f.conversation.state.turns[0].status = "completed";
+      // 问题卡已失效后，仍须从后续回合的历史确认真实答案回显。
+      if (echoed)
+        f.conversation.state.turns.push({
+          turnId: "reply-turn",
+          status: "completed",
+          items: [
+            {
+              id: "reply-message",
+              type: "userMessage",
+              content: [{ type: "text", text: replyText() }],
+            },
+          ],
+        });
       f.conversation.revision++;
       return { ok: true };
     });

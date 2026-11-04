@@ -52,7 +52,7 @@ const handle = serveStdio(
   () => {
     const server = new McpServer({
       name: "codex-taskboard",
-      version: "0.2.3",
+      version: "0.2.4",
       icons: [{ src: icon, mimeType: "image/svg+xml" }],
     });
     new OpenAIExtensions(server);

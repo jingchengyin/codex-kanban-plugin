@@ -354,8 +354,8 @@ test("a sparse live turn keeps canonical questions until an accepted user reply 
   }
 });
 
-for (const status of ["completed", "interrupted"]) {
-  test(`a ${status} desktop turn ${status === "completed" ? "preserves" : "clears"} unanswered async questions`, async () => {
+for (const status of ["completed", "interrupted", "failed"]) {
+  test(`a ${status} desktop turn clears async waiting despite retained canonical questions`, async () => {
     const f = await fixture();
     try {
       await f.bridge.snapshot(null, [id]);
@@ -365,7 +365,11 @@ for (const status of ["completed", "interrupted"]) {
       const question = {
         id: "retained-question",
         type: "agentMessage",
-        questions: [{ title: "继续处理吗？" }],
+        questions: [
+          { title: "继续处理吗？" },
+          { title: "优先哪个目标？" },
+          { title: "输出什么结果？" },
+        ],
       };
       f.snapshot({
         ...f.state(),
@@ -392,6 +396,7 @@ for (const status of ["completed", "interrupted"]) {
       assert.ok(waiting.threads[0].waitingSince);
       assert.equal(waiting.threads[0].waitingQuestion, "继续处理吗？");
       assert.equal(waiting.confirmations?.requests.length, 1);
+      assert.equal(waiting.confirmations?.requests[0].questions.length, 3);
 
       // 实时终态覆盖 canonical 的运行状态，但历史问题仍保留。
       f.snapshot({
@@ -404,23 +409,14 @@ for (const status of ["completed", "interrupted"]) {
           (await f.bridge.snapshot()).threads[0].runtime?.type === "idle",
       );
       const ended = await f.bridge.snapshot();
-      const pending = status === "completed";
-      assert.equal(columnFor(ended.threads[0]), pending ? "waiting" : "idle");
-      assert.equal(ended.threads[0].pendingUserInput, pending);
       assert.equal(
-        ended.threads[0].waitingSince,
-        pending ? waiting.threads[0].waitingSince : null,
+        columnFor(ended.threads[0]),
+        status === "failed" ? "error" : "idle",
       );
-      assert.equal(
-        ended.threads[0].waitingQuestion,
-        pending ? "继续处理吗？" : null,
-      );
-      if (pending)
-        assert.equal(
-          ended.confirmations?.requests[0].id,
-          waiting.confirmations?.requests[0].id,
-        );
-      else assert.deepEqual(ended.confirmations?.requests, []);
+      assert.equal(ended.threads[0].pendingUserInput, false);
+      assert.equal(ended.threads[0].waitingSince, null);
+      assert.equal(ended.threads[0].waitingQuestion, null);
+      assert.deepEqual(ended.confirmations?.requests, []);
 
       f.snapshot({
         ...f.state(),
@@ -431,7 +427,6 @@ for (const status of ["completed", "interrupted"]) {
             turnId: "next-turn",
             status: "inProgress",
             items: [
-              { type: "userMessage", id: "new-input", content: [] },
               {
                 ...question,
                 id: "next-question",
