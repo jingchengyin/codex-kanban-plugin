@@ -30,13 +30,18 @@ export function desktopTurns(state: any): any[] {
   return [...byId.values()];
 }
 
-/** 只读取最近进行中回合的异步问题，已结束回合中的问题不再对用户可见。 */
+/** 按回合顺序读取异步问题；正常完成不代表已答，回复或取消才清除待答状态。 */
 export function desktopInputState(state: any): InputState {
-  const turn = desktopTurns(state)
-    .reverse()
-    .find((turn) => turn.status === "inProgress");
-  // 与原生卡片一致：当前回合没有问题时，不回退到更早的提问。
-  return inputState(turn?.turnId ?? turn?.id ?? "desktop", turn?.items ?? []);
+  let current = inputState("desktop", []);
+  for (const turn of desktopTurns(state)) {
+    const turnId = turn.turnId ?? turn.id;
+    if (turn.status === "interrupted" || turn.status === "failed")
+      current = inputState(turnId, []);
+    // 异步答案可能在下一轮回显，沿用逐题解除和普通消息整组解除规则。
+    else if (turn.status === "inProgress" || turn.status === "completed")
+      current = inputState(turnId, turn.items ?? [], current);
+  }
+  return current;
 }
 
 /** 提取结构化问题的简短原文，不使用助手正文、选项或用户答案。 */

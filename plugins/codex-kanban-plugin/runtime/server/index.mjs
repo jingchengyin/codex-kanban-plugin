@@ -52128,8 +52128,15 @@ function desktopTurns(state) {
   return [...byId.values()];
 }
 function desktopInputState(state) {
-  const turn = desktopTurns(state).reverse().find((turn2) => turn2.status === "inProgress");
-  return inputState(turn?.turnId ?? turn?.id ?? "desktop", turn?.items ?? []);
+  let current = inputState("desktop", []);
+  for (const turn of desktopTurns(state)) {
+    const turnId = turn.turnId ?? turn.id;
+    if (turn.status === "interrupted" || turn.status === "failed")
+      current = inputState(turnId, []);
+    else if (turn.status === "inProgress" || turn.status === "completed")
+      current = inputState(turnId, turn.items ?? [], current);
+  }
+  return current;
 }
 function questionSummary(question) {
   if (typeof question?.title !== "string") return null;
@@ -54471,7 +54478,7 @@ var handle = serveStdio(
   () => {
     const server = new McpServer({
       name: "codex-taskboard",
-      version: "0.2.1",
+      version: "0.2.2",
       icons: [{ src: icon, mimeType: "image/svg+xml" }]
     });
     new OpenAIExtensions(server);

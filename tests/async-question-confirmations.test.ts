@@ -42,7 +42,7 @@ function fixture(state: any = {}) {
       cwd: "/work/kanban",
       requests: [],
       threadRuntimeStatus: { type: "idle" },
-      turns: [{ turnId: "question-turn", status: "inProgress", items: [item] }],
+      turns: [{ turnId: "question-turn", status: "completed", items: [item] }],
       ...state,
     },
   };
@@ -74,12 +74,18 @@ function fixture(state: any = {}) {
     },
     first: () => confirmations.read().requests[0],
     echo(type = "userMessage", status?: string, text = replyText()) {
-      conversation.state.turns.at(-1).items.push({
-        id: "reply-message",
-        type,
-        ...(status ? { status } : {}),
-        [type === "steeringUserMessage" ? "input" : "content"]: [
-          { type: "text", text },
+      conversation.state.turns.push({
+        turnId: "reply-turn",
+        status: "inProgress",
+        items: [
+          {
+            id: "reply-message",
+            type,
+            ...(status ? { status } : {}),
+            [type === "steeringUserMessage" ? "input" : "content"]: [
+              { type: "text", text },
+            ],
+          },
         ],
       });
       conversation.revision++;
@@ -146,8 +152,8 @@ test("async questions merge ordered canonical history with sparse live turns", (
   assert.deepEqual(f.confirmations.read().requests, []);
 });
 
-test("ended question turns remove async cards and reject their old IDs before sending", async () => {
-  for (const status of ["completed", "interrupted", "failed"]) {
+test("cancelled question turns remove async cards and reject their old IDs before sending", async () => {
+  for (const status of ["interrupted", "failed"]) {
     const f = fixture();
     const pending = f.first();
     assert.ok(pending);
@@ -166,19 +172,23 @@ test("ended question turns remove async cards and reject their old IDs before se
   }
 });
 
-test("an active turn without questions does not revive earlier async questions", () => {
+test("an ordinary user message in the next turn clears earlier async questions", () => {
   for (const status of ["completed", "inProgress"]) {
     const f = fixture({
       turns: [
         { turnId: "old-turn", status, items: [item] },
-        { turnId: "new-turn", status: "inProgress", items: [] },
+        {
+          turnId: "new-turn",
+          status: "inProgress",
+          items: [{ type: "userMessage", content: [] }],
+        },
       ],
     });
     assert.deepEqual(f.confirmations.read().requests, []);
   }
 });
 
-test("async cards expose only questions from the most recent active turn", () => {
+test("new user input clears old questions while automatic completion keeps the new questions", () => {
   const latestItem = {
     ...item,
     id: "latest-question",
@@ -187,7 +197,11 @@ test("async cards expose only questions from the most recent active turn", () =>
   const f = fixture({
     turns: [
       { turnId: "old-turn", status: "inProgress", items: [item] },
-      { turnId: "new-turn", status: "inProgress", items: [latestItem] },
+      {
+        turnId: "new-turn",
+        status: "inProgress",
+        items: [{ type: "userMessage", content: [] }, latestItem],
+      },
       { turnId: "automatic-turn", status: "completed", items: [] },
     ],
   });
@@ -352,7 +366,7 @@ test("a completed turn confirms submitted answers only when desktop history cont
     assert.ok(pending);
     f.onSend(async () => {
       if (echoed) f.echo();
-      f.conversation.state.turns[0].status = "completed";
+      f.conversation.state.turns.at(-1).status = "completed";
       f.conversation.revision++;
       return { ok: true };
     });
@@ -431,7 +445,7 @@ test("async answers wait for accepted steering instead of an unaccepted pending 
   assert.equal(f.first().id, pending.id);
   f.onSend(async () => {
     setTimeout(() => {
-      f.conversation.state.turns[0].items.at(-1).status = "accepted";
+      f.conversation.state.turns.at(-1).items.at(-1).status = "accepted";
       f.conversation.revision++;
     }, 5);
     return { ok: true };

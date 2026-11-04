@@ -1,6 +1,6 @@
 {
   "name": "codex-kanban-plugin",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "本机 Codex 工作台：对话状态、合集与历史用量回顾。",
   "author": {
     "name": "jingchengyin"
@@ -11,7 +11,7 @@
   "interface": {
     "displayName": "Codex-Kanban-Plugin",
     "shortDescription": "A Kanban board for Codex power users to manage concurrent chats, collections, and usage history.",
-    "longDescription": "A Kanban board for Codex power users to manage concurrent chats, collections, and usage history. 专为 Codex 重度使用者设计，看板模式管理并发对话、合集和历史用量",
+    "longDescription": "A Kanban board for Codex power users to manage concurrent chats, collections, and usage history. 专为 Codex 重度使用者设计，看板模式管理并发对话、组织对话合集",
     "developerName": "jingchengyin",
     "websiteURL": "https://github.com/jingchengyin/codex-kanban-plugin",
     "category": "Developer Tools",
