@@ -5,6 +5,8 @@ import {
   ExternalLink,
   Plus,
   RefreshCw,
+  RotateCcw,
+  SlidersHorizontal,
   Trash2,
   X,
 } from "lucide-react";
@@ -36,19 +38,19 @@ import { DetectedArtifacts } from "./detected-artifacts";
 import { useI18n } from "./i18n";
 import { WorkItemIcon, WorkItemIconPicker } from "./work-item-icon";
 import {
+  DEFAULT_WORK_ITEM_FILTERS,
+  matchesWorkItemFilters,
+  WORK_ITEM_STATUSES as statuses,
+} from "./work-item-filters";
+import {
   reconcileWorkItemDraft,
   workItemSaveInput as saveInput,
 } from "./work-item-draft";
 import { Button } from "./vendor/affectui/button";
+import { FilterMenu, type FilterValue } from "./vendor/affectui/filter-menu";
 import { ThinkingLoader } from "./vendor/affectui/thinking-loader";
 import "./workspace.css";
 
-const statuses = {
-  planned: "待开始",
-  active: "进行中",
-  review: "待验收",
-  done: "已验收",
-} as const;
 const runtimeLabels = {
   running: "正在运行",
   waiting: "需要你处理",
@@ -156,7 +158,8 @@ export function WorkItems({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [stateFilter, setStateFilter] = useState("");
+  const [filters, setFilters] = useState<FilterValue>(DEFAULT_WORK_ITEM_FILTERS);
+  const [filterOpen, setFilterOpen] = useState(false);
   const [revision, setRevision] = useState(0);
   const byId = useMemo(
     () => new Map(threads.map((thread) => [thread.id, thread])),
@@ -347,12 +350,8 @@ export function WorkItems({
     }
   }
 
-  const displayed = items.filter(
-    (item) =>
-      (!stateFilter || item.status === stateFilter) &&
-      `${item.title} ${item.description}`
-        .toLocaleLowerCase()
-        .includes(query.trim().toLocaleLowerCase()),
+  const displayed = items.filter((item) =>
+    matchesWorkItemFilters(item, query, filters),
   );
   return (
     <section className="workspace-panel" aria-label={t("合集")}>
@@ -399,20 +398,56 @@ export function WorkItems({
               value={query}
               onChange={(event) => setQuery(event.target.value)}
             />
-            <select
-              className="workspace-input"
-              aria-label={t("合集状态")}
-              value={stateFilter}
-              onChange={(event) => setStateFilter(event.target.value)}
+            <Button
+              variant="secondary"
+              icon={<SlidersHorizontal size={14} />}
+              aria-expanded={filterOpen}
+              aria-controls="work-item-status-filters"
+              onClick={() => setFilterOpen(!filterOpen)}
             >
-              <option value="">{t("全部状态")}</option>
-              {Object.entries(statuses).map(([value, label]) => (
-                <option key={value} value={value}>
-                  {t(label)}
-                </option>
-              ))}
-            </select>
+              {t("合集状态")}
+              {filters.status.length !== DEFAULT_WORK_ITEM_FILTERS.status.length
+                ? ` ${filters.status.length}`
+                : ""}
+            </Button>
           </div>
+          {filterOpen && (
+            <div className="filter-area" id="work-item-status-filters">
+              <FilterMenu
+                title={t("筛选")}
+                hints={false}
+                labels={{
+                  clearAll: t("清除全部"),
+                  remove: (label) => t("移除 {label}", { label }),
+                  more: (count, labels) =>
+                    t("另有 {count} 项：{labels}", { count, labels }),
+                  selected: (count) => t("{count} 项筛选", { count }),
+                }}
+                groups={[
+                  {
+                    id: "status",
+                    label: t("合集状态"),
+                    options: Object.entries(statuses).map(([id, label]) => ({
+                      id,
+                      label: t(label),
+                    })),
+                  },
+                ]}
+                value={filters}
+                onChange={(next) =>
+                  setFilters({ ...DEFAULT_WORK_ITEM_FILTERS, ...next })
+                }
+              />
+              <Button
+                variant="ghost"
+                size="sm"
+                icon={<X size={14} />}
+                onClick={() => setFilterOpen(false)}
+              >
+                {t("收起筛选")}
+              </Button>
+            </div>
+          )}
           {!loaded ? (
             <div className="workspace-empty">
               {loading ? (
@@ -437,6 +472,19 @@ export function WorkItems({
                     : "例如，把实现、测试和发布说明的对话关联到同一次发布。",
                 )}
               </p>
+              {items.length > 0 && (
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  icon={<RotateCcw size={14} />}
+                  onClick={() => {
+                    setQuery("");
+                    setFilters(DEFAULT_WORK_ITEM_FILTERS);
+                  }}
+                >
+                  {t("重置筛选")}
+                </Button>
+              )}
             </div>
           ) : (
             displayed.map((item) => {
