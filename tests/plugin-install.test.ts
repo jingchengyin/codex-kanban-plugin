@@ -178,6 +178,7 @@ for (const desktopPath of [false, true]) {
           "taskboard_artifact_rules_save",
           "taskboard_confirmation_reply",
           "taskboard_live_launch",
+          "taskboard_message_send",
           "taskboard_open",
           "taskboard_panel",
           "taskboard_snapshot",

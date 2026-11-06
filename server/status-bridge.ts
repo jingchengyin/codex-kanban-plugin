@@ -1,6 +1,10 @@
 import { homedir } from "node:os";
 import { basename, join } from "node:path";
 import { readLocalData } from "./local-data.js";
+import { RemoteDataReader } from "./remote-data.js";
+import { threadLocation } from "../shared/thread-location.js";
+import { sendDesktopMessage } from "./desktop-messages.js";
+import type { ConversationMessage } from "../shared/messages.js";
 import { GitMetadataReader } from "./git-metadata.js";
 import { DesktopIpc, type DesktopConversation } from "./desktop-ipc.js";
 import { DesktopConfirmations } from "./desktop-confirmations.js";
@@ -42,6 +46,11 @@ export function localEndpoint(value: string): string {
 /** 同步本机对话运行状态和待答标记，首次打开时加载最近的待同步对话。 */
 export class StatusBridge {
   private gitMetadata = new GitMetadataReader();
+  private remoteData: RemoteDataReader;
+  private sentMessages = new Map<
+    string,
+    { text: string; result: Promise<{ submitted: true }> }
+  >();
   private desktop?: DesktopIpc;
   private desktopConfirmations?: DesktopConfirmations;
   private observationLease?: ReturnType<typeof setTimeout>;
@@ -89,6 +98,7 @@ export class StatusBridge {
 
   constructor(options: { endpoint?: string; home?: string } = {}) {
     this.home = options.home ?? process.env.CODEX_HOME ?? `${homedir()}/.codex`;
+    this.remoteData = new RemoteDataReader(this.home);
     const websocket = options.endpoint ?? process.env.TASKBOARD_WS_URL;
     this.endpoint = websocket
       ? localEndpoint(websocket)
@@ -147,8 +157,10 @@ export class StatusBridge {
   /** 从原窗口快照恢复状态与提问，历史索引继续由本地读取提供。 */
   private rememberDesktop(id: string, value: DesktopConversation) {
     const state = value.state;
+    const { hostId } = threadLocation(id);
     this.remember({
       id,
+      hostId,
       title: state.title,
       cwd: state.cwd,
       source: state.source,
@@ -322,6 +334,9 @@ export class StatusBridge {
       this.rememberStatus(thread.id, thread.status);
     this.ephemeral.set(thread.id, {
       id: thread.id,
+      ...(thread.hostId && thread.hostId !== "local"
+        ? { hostId: thread.hostId }
+        : {}),
       title:
         typeof thread.name === "string"
           ? thread.name
@@ -626,17 +641,29 @@ export class StatusBridge {
       cached && cached.selection === selection && Date.now() - cached.at < 1000;
     const local = hit ? cached.data : await readLocalData(this.home, selection);
     if (!hit) this.cache = { at: Date.now(), selection, data: local };
+    const remote = await this.remoteData.read();
     const threads = new Map(this.ephemeral);
     for (const thread of local.threads) threads.set(thread.id, thread);
+    for (const thread of remote.threads) threads.set(thread.id, thread);
     // 同一路径只读取一次，同时覆盖尚未写入本地索引的新对话。
     const gitByCwd = new Map(
-      [...new Set([...threads.values()].map((thread) => thread.cwd))].map(
-        (cwd) => [cwd, this.gitMetadata.read(cwd)],
-      ),
+      [
+        ...new Set(
+          [...threads.values()]
+            .filter((thread) => !thread.hostId || thread.hostId === "local")
+            .map((thread) => thread.cwd),
+        ),
+      ].map((cwd) => [cwd, this.gitMetadata.read(cwd)]),
     );
     await Promise.all(
       [...threads].map(async ([id, thread]) => {
-        threads.set(id, { ...thread, git: await gitByCwd.get(thread.cwd)! });
+        threads.set(id, {
+          ...thread,
+          git:
+            thread.hostId && thread.hostId !== "local"
+              ? null
+              : await gitByCwd.get(thread.cwd)!,
+        });
       }),
     );
     if (this.connection.state === "connected")
@@ -680,11 +707,24 @@ export class StatusBridge {
       for (const [id, thread] of threads) {
         const state = this.desktop.get(id)?.state;
         if (!state) continue;
+        const reply = desktopTurns(state)
+          .flatMap((turn) => turn.items ?? [])
+          .filter(
+            (item: any) =>
+              item.type === "agentMessage" &&
+              item.phase === "final_answer" &&
+              typeof item.text === "string" &&
+              item.text.trim(),
+          )
+          .at(-1)?.text as string | undefined;
         const confirmation = confirmations.requests.find(
           (request) => request.threadId === id,
         );
         threads.set(id, {
           ...thread,
+          latestReply: reply
+            ? reply.slice(0, 2000) + (reply.length > 2000 ? "…" : "")
+            : null,
           model:
             typeof state.latestModel === "string"
               ? state.latestModel
@@ -710,10 +750,19 @@ export class StatusBridge {
         this.initialSyncRequested &&
         !this.initialSyncComplete &&
         this.connection.state !== "disconnected",
-      threads: [...threads.values()].sort(compareByLastUserMessage),
+      threads: [...threads.values()]
+        .map((thread) => ({
+          ...thread,
+          canSend:
+            this.connection.state === "connected" &&
+            !!this.desktop?.get(thread.id) &&
+            ["active", "idle"].includes(thread.runtime?.type ?? ""),
+        }))
+        .sort(compareByLastUserMessage),
       confirmations,
       connection: { ...this.connection },
       sources: {
+        remoteHosts: remote.hosts,
         metadata: local.metadata,
         unread: local.unread,
         unreadReason: local.unreadReason,
@@ -725,6 +774,21 @@ export class StatusBridge {
   }
 
   /** 用户提交前检查当前连接，原请求是否有效由桌面转发器最终核对。 */
+  sendMessage(input: ConversationMessage): Promise<{ submitted: true }> {
+    const key = JSON.stringify([input.threadId, input.clientUserMessageId]);
+    const previous = this.sentMessages.get(key);
+    if (previous) {
+      if (previous.text !== input.text)
+        throw new Error("发送标识已被其他消息使用。");
+      return previous.result;
+    }
+    if (!this.desktop || this.connection.state !== "connected")
+      throw new Error("消息交互需要连接 Codex 桌面，请重新连接后重试。");
+    const result = sendDesktopMessage(this.desktop, input);
+    this.sentMessages.set(key, { text: input.text, result });
+    return result;
+  }
+
   async replyToConfirmation(input: ConfirmationReply) {
     if (this.connection.state !== "connected")
       throw new Error("实时状态连接已断开，请重新连接后重试。");

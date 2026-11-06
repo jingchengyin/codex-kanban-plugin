@@ -96,6 +96,35 @@ async function fixture() {
           message.params.conversationId === id
         )
           snapshot();
+        if (
+          ["thread-follower-start-turn", "thread-follower-steer-turn"].includes(
+            message.method,
+          )
+        ) {
+          send({
+            type: "response",
+            requestId: message.requestId,
+            resultType: "success",
+            result: { ok: true },
+          });
+          const request = message.params.turnStart?.request ?? message.params;
+          snapshot({
+            ...state,
+            turns: [
+              {
+                turnId: "message-test",
+                status: "inProgress",
+                items: [
+                  {
+                    type: "userMessage",
+                    clientId: request.clientUserMessageId,
+                    content: request.input,
+                  },
+                ],
+              },
+            ],
+          });
+        }
       }
     });
     connection.on("error", () => {});
@@ -471,3 +500,40 @@ for (const status of ["completed", "interrupted", "failed"]) {
     }
   });
 }
+
+test("duplicate sends share one delivery and reconnect snapshots control send availability", async () => {
+  const f = await fixture();
+  try {
+    await f.bridge.open();
+    await until(
+      async () => (await f.bridge.snapshot()).threads[0]?.canSend === true,
+    );
+    const input = {
+      threadId: id,
+      clientUserMessageId: "00000000-0000-4000-8000-000000000123",
+      text: "test message",
+    };
+    const results = await Promise.all([
+      f.bridge.sendMessage(input),
+      f.bridge.sendMessage(input),
+    ]);
+    assert.deepEqual(results, [{ submitted: true }, { submitted: true }]);
+    assert.equal(
+      f.messages.filter((m) => m.method === "thread-follower-steer-turn")
+        .length,
+      1,
+    );
+    assert.throws(
+      () => f.bridge.sendMessage({ ...input, text: "different" }),
+      /发送标识/,
+    );
+    f.snapshot({...f.state(),turns:[{turnId:"reply",items:[{type:"agentMessage",phase:"final_answer",text:"收到"}]}]});
+    await until(async()=>(await f.bridge.snapshot()).threads[0]?.latestReply==="收到");
+    f.disconnect();
+    await until(
+      async () => (await f.bridge.snapshot()).threads[0]?.canSend === false,
+    );
+  } finally {
+    await f.close();
+  }
+});

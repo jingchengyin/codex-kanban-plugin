@@ -510,3 +510,24 @@ test("async answers wait for accepted steering instead of an unaccepted pending 
   assert.equal(f.sent.length, 1);
   assert.deepEqual(f.confirmations.read().requests, []);
 });
+
+for (const type of ["idle", "active"])
+  test(`remote async answers preserve host-scoped card identity and ${type} owner routing`, async () => {
+    const f = fixture({ threadRuntimeStatus: { type } });
+    const boardId = "remote-ssh-discovered%3Adevbox/thread";
+    f.conversations.delete("thread");
+    f.conversations.set(boardId, f.conversation);
+    f.confirmations.remove("thread");
+    f.confirmations.update(boardId, f.conversation);
+    f.onSend(async () => {
+      f.echo();
+      return { ok: true };
+    });
+    const request = f.first();
+    assert.equal(request.threadId, boardId);
+    await f.confirmations.reply({ id: request.id, threadId: boardId, answers });
+    assert.equal(f.sent[0].threadId, boardId);
+    assert.equal(f.sent[0].params.conversationId, "thread");
+    if (type === "idle")
+      assert.equal(f.sent[0].params.turnStart.request.threadId, "thread");
+  });

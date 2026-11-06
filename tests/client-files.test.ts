@@ -141,6 +141,14 @@ test("file and conversation links use Codex host protocols without external fall
         const target = "01a09a03-bd00-71c2-9829-d89a84a479db";
         await client.openConversation(target);
         assert.deepEqual(externalCalls, [`openLink:codex://threads/${target}`]);
+        const hostId = "remote-ssh-discovered:devbox";
+        await client.openConversation(
+          `${encodeURIComponent(hostId)}/${target}`,
+        );
+        assert.equal(
+          externalCalls.at(-1),
+          `openLink:codex://threads/${target}?hostId=${encodeURIComponent(hostId)}`,
+        );
       }),
   );
 

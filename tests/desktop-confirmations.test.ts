@@ -3,6 +3,58 @@ import assert from "node:assert/strict";
 import { DesktopConfirmations } from "../server/desktop-confirmations";
 import type { DesktopConversation } from "../server/desktop-ipc";
 import type { ConfirmationReply } from "../shared/confirmations";
+import { boardThreadId } from "../shared/thread-location";
+
+test("remote question cards retain board identity while replies preserve the original RPC ID", async () => {
+  const boardId = boardThreadId("remote-ssh-discovered:devbox", "thread");
+  const raw = {
+    id: 9,
+    method: "item/tool/requestUserInput",
+    params: {
+      threadId: "thread",
+      questions: [
+        {
+          id: "q",
+          question: "Pick one",
+          options: [{ label: "A", description: "" }],
+          isOther: true,
+        },
+      ],
+    },
+  };
+  const conversation: DesktopConversation = {
+    ownerClientId: "owner",
+    revision: 1,
+    state: { requests: [raw, command(10)] },
+  };
+  const sent: any[] = [];
+  const confirmations = new DesktopConfirmations(
+    {
+      get: (id) => (id === boardId ? conversation : undefined),
+      requestOwner: async (id, method, params) => {
+        sent.push({ id, method, params });
+        conversation.state.requests = [];
+        return { ok: true };
+      },
+    },
+    50,
+  );
+  confirmations.update(boardId, conversation);
+  const requests = confirmations.read().requests;
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].threadId, boardId);
+  await confirmations.reply({
+    id: requests[0].id,
+    threadId: boardId,
+    answers: { q: { answers: ["custom reply"] } },
+  });
+  assert.equal(sent[0].id, boardId);
+  assert.equal(sent[0].params.conversationId, "thread");
+  assert.equal(sent[0].params.requestId, 9);
+  assert.deepEqual(sent[0].params.response, {
+    answers: { q: { answers: ["custom reply"] } },
+  });
+});
 
 const params = {
   threadId: "thread",
