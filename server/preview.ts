@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { StatusBridge } from "./status-bridge.js";
+import { conversationMessageInput } from "./desktop-messages.js";
 import { readLinkedThreads } from "./local-data.js";
 import { WorkspaceStore } from "./work-items.js";
 import { readWorkReview } from "./work-history.js";
@@ -64,7 +65,9 @@ const server = createServer(async (req, res) => {
         chunks.push(chunk);
       }
       const input = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-      if (url.pathname === "/api/work-items/save")
+      if (url.pathname === "/api/messages/send")
+        json(await bridge.sendMessage(conversationMessageInput.parse(input)));
+      else if (url.pathname === "/api/work-items/save")
         json(await discover(workspace.save(input)));
       else if (url.pathname === "/api/work-items/add-thread")
         json(await discover(workspace.addThread(input.id, input.threadId)));

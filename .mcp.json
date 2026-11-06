@@ -4,7 +4,14 @@
       "command": "/bin/sh",
       "args": ["./scripts/start-mcp.sh", "dist/server/index.js"],
       "cwd": ".",
-      "env_vars": ["HOME", "PATH", "CODEX_HOME", "TASKBOARD_WS_URL"],
+      "env_vars": [
+        "HOME",
+        "PATH",
+        "CODEX_HOME",
+        "TASKBOARD_WS_URL",
+        "SSH_AUTH_SOCK",
+        "KRB5CCNAME"
+      ],
       "startup_timeout_sec": 180,
       "tool_timeout_sec": 60
     }

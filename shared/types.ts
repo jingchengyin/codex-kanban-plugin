@@ -30,6 +30,10 @@ export type ThreadLink = { id: string; title: string };
 export type GitMetadata = { branch: string | null; isWorktree: boolean };
 export type Thread = {
   id: string;
+  hostId?: string;
+  hostName?: string;
+  canSend?: boolean;
+  latestReply?: string | null;
   title: string;
   cwd: string;
   project: string;
@@ -78,6 +82,7 @@ export type Snapshot = {
     message: string | null;
   };
   sources: {
+    remoteHosts?: RemoteHostSource[];
     metadata: boolean;
     unread: boolean;
     unreadReason: string;
@@ -85,6 +90,12 @@ export type Snapshot = {
     unreadOptions: { key: string; label: string; count: number }[];
     unreadSelection: string | null;
   };
+};
+export type RemoteHostSource = {
+  hostId: string;
+  name: string;
+  available: boolean;
+  error: string | null;
 };
 export type Column = "waiting" | "running" | "idle" | "error" | "unknown";
 export type BoardColumn = Column | "unread";
@@ -94,6 +105,12 @@ export type BoardScope = "all" | "attention";
 export function compareByLastUserMessage(a: Thread, b: Thread): number {
   return (
     (b.lastUserMessageAt ?? "").localeCompare(a.lastUserMessageAt ?? "") ||
+    (!a.lastUserMessageAt && !b.lastUserMessageAt
+      ? (b.hostId ?? "local").localeCompare(a.hostId ?? "local") ||
+        (a.hostId && a.hostId !== "local"
+          ? b.updatedAt.localeCompare(a.updatedAt)
+          : 0)
+      : 0) ||
     a.id.localeCompare(b.id)
   );
 }

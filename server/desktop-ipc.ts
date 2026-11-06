@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { createConnection, type Socket } from "node:net";
 import { join } from "node:path";
+import { boardThreadId, threadLocation } from "../shared/thread-location.js";
 
 export type DesktopConversation = {
   state: any;
@@ -197,6 +198,9 @@ export class DesktopIpc {
                 : 1,
           method,
           params,
+          ...(threadId && threadLocation(threadId).hostId !== "local"
+            ? { hostId: threadLocation(threadId).hostId }
+            : {}),
           ...(ownerClientId ? { targetClientId: ownerClientId } : {}),
         })
       ) {
@@ -210,12 +214,17 @@ export class DesktopIpc {
   /** 只声明观察关系，不请求恢复对话，也不取得执行所有权。 */
   private follow(threadId: string, following: boolean) {
     if (!this.clientId) return;
+    const location = threadLocation(threadId);
     this.send({
       type: "broadcast",
       method: "thread-stream-following-changed",
       sourceClientId: this.clientId,
       version: 1,
-      params: { conversationId: threadId, hostId: "local", following },
+      params: {
+        conversationId: location.threadId,
+        hostId: location.hostId,
+        following,
+      },
     });
   }
 
@@ -261,15 +270,19 @@ export class DesktopIpc {
       const { conversationId, hostId } = message.params ?? {};
       if (
         message.version === 1 &&
-        hostId === "local" &&
-        this.watched.has(conversationId)
+        typeof hostId === "string" &&
+        typeof conversationId === "string" &&
+        this.watched.has(boardThreadId(hostId, conversationId))
       )
-        this.follow(conversationId, true);
+        this.follow(boardThreadId(hostId, conversationId), true);
       return;
     }
     if (message.method !== "thread-stream-state-changed") return;
-    const { conversationId: id, hostId, change } = message.params ?? {};
-    if (hostId !== "local" || !this.watched.has(id)) return;
+    const { conversationId, hostId, change } = message.params ?? {};
+    if (typeof hostId !== "string" || typeof conversationId !== "string")
+      return;
+    const id = boardThreadId(hostId, conversationId);
+    if (!this.watched.has(id)) return;
     if (message.version !== 11)
       throw new Error("unsupported-desktop-state-version");
     if (typeof message.sourceClientId !== "string") return;

@@ -8,6 +8,8 @@ import type {
 import { confirmationReplyInput } from "./confirmations.js";
 import type { DesktopConversation, DesktopIpc } from "./desktop-ipc.js";
 import { desktopInputState, desktopTurns, inputState } from "./user-input.js";
+import { threadLocation } from "../shared/thread-location.js";
+import { desktopMessageRequest } from "./desktop-messages.js";
 
 type Pending = {
   owner: string;
@@ -175,15 +177,22 @@ export class DesktopConfirmations {
 
   /** 每个原请求保留稳定的卡片 ID；owner 或请求内容改变后旧 ID 失效。 */
   update(threadId: string, conversation: DesktopConversation) {
+    const location = threadLocation(threadId);
     const previous = this.threads.get(threadId);
     const next = new Map<string, Pending>();
-    const question = asyncRequest(threadId, conversation.state);
+    const question = asyncRequest(location.threadId, conversation.state);
     for (const raw of [
       ...(conversation.state.requests ?? []),
       ...(question ? [question] : []),
     ]) {
-      const confirmation = describe(threadId, raw, conversation.state);
+      const confirmation = describe(location.threadId, raw, conversation.state);
       if (!confirmation) continue;
+      if (
+        location.hostId !== "local" &&
+        confirmation.kind !== "userInput" &&
+        confirmation.kind !== "asyncUserInput"
+      )
+        continue;
       const key = JSON.stringify([conversation.ownerClientId, raw]);
       const known = previous?.get(key);
       next.set(key, {
@@ -191,6 +200,7 @@ export class DesktopConfirmations {
         raw,
         confirmation: {
           ...confirmation,
+          threadId,
           id: known?.confirmation.id ?? randomUUID(),
         },
         sent: known?.sent ?? false,
@@ -237,7 +247,7 @@ export class DesktopConfirmations {
     const current = this.ipc.get(parsed.threadId);
     if (!current || current.ownerClientId !== pending.owner) throw stale();
     let params: any = {
-      conversationId: parsed.threadId,
+      conversationId: threadLocation(parsed.threadId).threadId,
       requestId: pending.raw.id,
     };
     let method: string;
@@ -275,54 +285,15 @@ export class DesktopConfirmations {
           answer: answers[question.id].answers[0],
         }));
         const prompt = `<send_user_message_question_reply>\n${JSON.stringify(replies)}\n</send_user_message_question_reply>`;
-        const clientUserMessageId = randomUUID();
-        const cwd = current.state.cwd;
-        const restoreMessage = {
-          id: clientUserMessageId,
-          text: prompt,
-          context: {
-            prompt,
-            turnTrigger: "send_user_message_async_question",
-            addedFiles: [],
-            fileAttachments: [],
-            ideContext: null,
-            imageAttachments: [],
-            workspaceRoots: typeof cwd === "string" ? [cwd] : [],
-          },
-          cwd,
-          createdAt: Date.now(),
-          responsesapiClientMetadata: { source: "codex" },
-        };
-        const input = [{ type: "text", text: prompt, text_elements: [] }];
-        // 让原窗口继承当前线程设置；运行中作为续写发送，空闲时开始下一轮。
-        if (current.state.threadRuntimeStatus?.type === "active") {
-          method = "thread-follower-steer-turn";
-          params = {
-            conversationId: parsed.threadId,
-            input,
-            restoreMessage,
-            clientUserMessageId,
-            attachments: [],
-          };
-        } else {
-          method = "thread-follower-start-turn";
-          params = {
-            conversationId: parsed.threadId,
-            turnStart: {
-              request: {
-                threadId: parsed.threadId,
-                input,
-                turnTrigger: "send_user_message_async_question",
-                clientUserMessageId,
-              },
-              context: {
-                inheritThreadSettings: true,
-                restoreMessage,
-                attachments: [],
-              },
-            },
-          };
-        }
+        const request = desktopMessageRequest(
+          threadLocation(parsed.threadId).threadId,
+          current.state,
+          prompt,
+          randomUUID(),
+          "send_user_message_async_question",
+        );
+        method = request.method;
+        params = request.params;
       } else {
         method = "thread-follower-submit-user-input";
         params.response = { answers };
