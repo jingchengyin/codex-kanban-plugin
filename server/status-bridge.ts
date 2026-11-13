@@ -631,6 +631,7 @@ export class StatusBridge {
     }
   }
 
+  /** 合并本地索引、远程缓存和桌面实时状态，生成当前看板快照。 */
   async snapshot(
     selection: string | null = null,
     observedThreadIds?: string[],
@@ -641,7 +642,8 @@ export class StatusBridge {
       cached && cached.selection === selection && Date.now() - cached.at < 1000;
     const local = hit ? cached.data : await readLocalData(this.home, selection);
     if (!hit) this.cache = { at: Date.now(), selection, data: local };
-    const remote = await this.remoteData.read();
+    // SSH 索引在后台刷新，慢连接不阻塞本地快照和观察续租。
+    const remote = this.remoteData.readCached();
     const threads = new Map(this.ephemeral);
     for (const thread of local.threads) threads.set(thread.id, thread);
     for (const thread of remote.threads) threads.set(thread.id, thread);

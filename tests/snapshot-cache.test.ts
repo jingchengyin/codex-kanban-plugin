@@ -87,6 +87,26 @@ function snapshot(): Snapshot {
   };
 }
 
+/** 模拟本地目录不可读、远程索引和桌面状态仍可用的快照。 */
+function remoteSnapshot(): Snapshot {
+  const value = snapshot();
+  const hostId = "remote-ssh:devbox";
+  const id = `${hostId}/${value.threads[0].id}`;
+  value.sources.metadata = false;
+  value.sources.remoteHosts = [
+    { hostId, name: "Devbox", available: true, error: null },
+  ];
+  value.threads[0] = {
+    ...value.threads[0],
+    id,
+    hostId,
+    canSend: true,
+    latestReply: "原回复",
+  };
+  value.confirmations!.requests[0].threadId = id;
+  return value;
+}
+
 test("a recreated view restores its last successful list as stale without confirmation content", () => {
   const storage = memoryStorage();
   const original = snapshot();
@@ -348,6 +368,87 @@ test("metadata failure keeps the previous list and source error but a successful
   };
   assert.equal(reconcileSnapshot(previous, empty), empty);
   assert.equal(reconcileSnapshot(null, unavailable), unavailable);
+});
+
+test("missing local metadata cannot replace fresh remote updates or revoke their actions", () => {
+  const previous = remoteSnapshot();
+  const first = reconcileSnapshot(null, previous);
+  assert.equal(first, previous);
+  const next = remoteSnapshot();
+  next.threads[0] = {
+    ...next.threads[0],
+    title: "远程最新标题",
+    latestReply: "远程最新回复",
+  };
+  next.threads.push({ ...next.threads[0], id: "remote-ssh:devbox/new" });
+
+  const merged = reconcileSnapshot(first, next);
+  assert.deepEqual(merged.threads, next.threads);
+  assert.equal(merged.threads[0].fresh, true);
+  assert.equal(merged.threads[0].canSend, true);
+  assert.equal(merged.cached, false);
+  assert.equal(merged.connection, next.connection);
+  assert.deepEqual(merged.confirmations, next.confirmations);
+});
+
+test("local metadata failure restores only missing local threads while retaining live local and remote states", () => {
+  const previous = snapshot();
+  const remote = remoteSnapshot();
+  previous.threads.push(
+    { ...previous.threads[0], id: "live-local", hostId: "local" },
+    remote.threads[0],
+  );
+  const next = remoteSnapshot();
+  next.threads.push({
+    ...previous.threads[1],
+    title: "实时本地标题",
+    canSend: true,
+  });
+  next.confirmations!.requests.push({
+    ...previous.confirmations!.requests[0],
+    id: "live-local-request",
+    threadId: "live-local",
+  });
+
+  const merged = reconcileSnapshot(previous, next);
+  const restored = merged.threads.find(
+    (thread) => thread.id === "conversation",
+  )!;
+  assert.equal(restored.fresh, false);
+  assert.equal(restored.canSend, false);
+  assert.equal(restored.cachedColumn, "waiting");
+  assert.equal(restored.pendingUserInput, false);
+  assert.equal(restored.waitingQuestion, null);
+  assert.deepEqual(
+    merged.threads.filter((thread) => thread.id !== "conversation"),
+    next.threads,
+  );
+  assert.equal(merged.cached, true);
+  assert.equal(merged.connection, next.connection);
+  assert.deepEqual(merged.confirmations, next.confirmations);
+});
+
+test("local metadata failure does not restore deleted remote threads and recovery clears the local fallback", () => {
+  const remote = remoteSnapshot();
+  const unavailable = { ...remote, threads: [] };
+  assert.equal(reconcileSnapshot(remote, unavailable), unavailable);
+
+  const previous = snapshot();
+  previous.threads.push(remote.threads[0]);
+  const fallback = reconcileSnapshot(previous, unavailable);
+  assert.deepEqual(
+    fallback.threads.map((thread) => thread.id),
+    ["conversation"],
+  );
+  assert.equal(fallback.threads[0].fresh, false);
+  assert.equal(fallback.cached, true);
+  assert.deepEqual(fallback.confirmations, { available: false, requests: [] });
+
+  const recovered = {
+    ...unavailable,
+    sources: { ...unavailable.sources, metadata: true },
+  };
+  assert.equal(reconcileSnapshot(fallback, recovered), recovered);
 });
 
 test("reconciliation uses conversation identity and never labels previously unknown threads as cached", () => {

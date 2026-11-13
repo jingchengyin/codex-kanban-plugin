@@ -66,13 +66,22 @@ const command = `python3 -c 'import base64;exec(base64.b64decode("${Buffer.from(
 
 type RemoteData = { threads: Thread[]; hosts: RemoteHostSource[] };
 
-/** Discover SSH hosts configured in Codex; reuse their SSH aliases and desktop status streams. */
+/** 读取 Codex 已配置 SSH 主机的会话索引，复用现有别名和凭据。 */
 export class RemoteDataReader {
   private cached: RemoteData = { threads: [], hosts: [] };
   private checkedAt = 0;
   private pending?: Promise<RemoteData>;
   constructor(private readonly home: string) {}
 
+  /** 立即返回上次索引，并复用等待式读取在后台刷新。 */
+  readCached(): RemoteData {
+    void this.read().catch(() => {
+      // 后台读取失败时保留已有索引，不影响本地快照。
+    });
+    return this.cached;
+  }
+
+  /** 等待当前刷新完成，供需要最新远程索引的调用方使用。 */
   read(): Promise<RemoteData> {
     if (this.pending) return this.pending;
     if (Date.now() - this.checkedAt < 10000)

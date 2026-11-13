@@ -133,6 +133,59 @@ test("a host outage keeps the last index, reports the failure and retries after 
   }
 });
 
+test("cached reads return immediately and share background SSH refreshes", async (t) => {
+  const f = await fixture();
+  try {
+    const empty = f.reader.readCached();
+    assert.deepEqual(empty, { threads: [], hosts: [] });
+    const loading = f.reader.read();
+    assert.equal(f.reader.read(), loading);
+    assert.equal(f.reader.readCached(), empty);
+
+    const loaded = await loading;
+    assert.equal(loaded.threads.length, 1);
+    assert.equal(f.reader.readCached(), loaded);
+
+    await writeFile(f.output, JSON.stringify([{ ...row, title: "Updated" }]));
+    const now = Date.now();
+    t.mock.method(Date, "now", () => now + 11000);
+    assert.equal(f.reader.readCached(), loaded);
+    const refreshing = f.reader.read();
+    assert.notEqual(refreshing, loading);
+    assert.equal(f.reader.read(), refreshing);
+    assert.equal(f.reader.readCached(), loaded);
+
+    const refreshed = await refreshing;
+    assert.equal(refreshed.threads[0].title, "Updated");
+    assert.equal(f.reader.readCached(), refreshed);
+  } finally {
+    await f.close();
+  }
+});
+
+test("failed background reads keep the last index and can retry", async (t) => {
+  const f = await fixture();
+  try {
+    const loaded = await f.reader.read();
+    await writeFile(join(f.home, ".codex-global-state.json"), "{");
+    const now = Date.now();
+    t.mock.method(Date, "now", () => now + 11000);
+    assert.equal(f.reader.readCached(), loaded);
+    await assert.rejects(f.reader.read(), SyntaxError);
+
+    await writeFile(
+      join(f.home, ".codex-global-state.json"),
+      JSON.stringify(f.config),
+    );
+    assert.equal(f.reader.readCached(), loaded);
+    const recovered = await f.reader.read();
+    assert.equal(recovered.hosts[0].available, true);
+    assert.equal(f.reader.readCached(), recovered);
+  } finally {
+    await f.close();
+  }
+});
+
 test("invalid remote rows are reported instead of entering the trusted conversation model", async () => {
   const f = await fixture();
   try {

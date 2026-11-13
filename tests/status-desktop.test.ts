@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { StatusBridge } from "../server/status-bridge";
+import { RemoteDataReader } from "../server/remote-data";
 import { columnFor } from "../shared/types";
 
 const id = "00000000-0000-0000-0000-000000000001";
@@ -182,6 +183,46 @@ test("default bridge observes the original desktop without spawning or resuming 
     );
     assert.equal((await f.bridge.snapshot()).threads[0].goalStatus, "none");
   } finally {
+    await f.close();
+  }
+});
+
+test("pending SSH metadata never blocks local desktop snapshots or updates", async (t) => {
+  const f = await fixture();
+  let releaseRemote!: (data: Awaited<ReturnType<RemoteDataReader["read"]>>) => void;
+  const pendingRemote = new Promise<Awaited<ReturnType<RemoteDataReader["read"]>>>(
+    (resolve) => {
+      releaseRemote = resolve;
+    },
+  );
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await f.bridge.open();
+    await until(
+      async () => (await f.bridge.snapshot()).threads[0]?.canSend === true,
+    );
+    t.mock.method(RemoteDataReader.prototype, "read", () => pendingRemote);
+    const timeout = new Promise<never>((_, reject) => {
+      timer = setTimeout(
+        () => reject(new Error("Local snapshots waited for SSH metadata")),
+        1000,
+      );
+    });
+    const first = await Promise.race([f.bridge.snapshot(null, [id]), timeout]);
+    assert.equal(first.threads[0].fresh, true);
+    assert.equal(first.threads[0].canSend, true);
+
+    f.snapshot({ ...f.state(), threadRuntimeStatus: { type: "idle" } });
+    await Promise.race([
+      until(async () => {
+        const next = await f.bridge.snapshot(null, [id]);
+        return next.threads[0].fresh && columnFor(next.threads[0]) === "idle";
+      }),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+    releaseRemote({ threads: [], hosts: [] });
     await f.close();
   }
 });

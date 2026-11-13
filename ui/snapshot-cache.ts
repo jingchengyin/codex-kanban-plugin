@@ -33,8 +33,21 @@ export function reconcileSnapshot(
   next: Snapshot,
 ): Snapshot {
   if (!previous) return next;
-  if (!next.sources.metadata && previous.threads.length)
-    return cachedSnapshot({ ...next, threads: previous.threads });
+  let restored: Snapshot["threads"] = [];
+  if (!next.sources.metadata) {
+    const currentIds = new Set(next.threads.map((thread) => thread.id));
+    // 本地目录失败只补回缺失的本地卡片，远程列表和已核实状态继续使用当前结果。
+    const fallback = cachedSnapshot({
+      ...next,
+      threads: previous.threads.filter(
+        (thread) =>
+          (!thread.hostId || thread.hostId === "local") &&
+          !currentIds.has(thread.id),
+      ),
+    });
+    if (!next.threads.length) return fallback.threads.length ? fallback : next;
+    restored = fallback.threads;
+  }
   // 成功读到空目录代表对话已清空，不能让旧列表永久留在页面。
   if (!next.threads.length) return next;
   const known = new Map(previous.threads.map((thread) => [thread.id, thread]));
@@ -57,6 +70,7 @@ export function reconcileSnapshot(
       waitingQuestion: null,
     };
   });
+  threads.push(...restored);
   const freshIds = new Set(
     next.threads.filter((thread) => thread.fresh).map((thread) => thread.id),
   );
