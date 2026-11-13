@@ -28,7 +28,8 @@ const english: Record<string, string> = {
   已关联: "Linked",
   "正在关联…": "Linking…",
   加入: "Add",
-  "没有匹配的合集，可在下方新建。": "No matching collections. Create one below.",
+  "没有匹配的合集，可在下方新建。":
+    "No matching collections. Create one below.",
   "还没有合集，可在下方新建。": "No collections yet. Create one below.",
   新合集名称: "New collection name",
   合集图标: "Collection icon",
@@ -166,7 +167,8 @@ const english: Record<string, string> = {
   已自动保存: "Saved automatically",
   "自动保存失败，修改仍保留在此处。":
     "Auto-save failed. Your changes are still here.",
-  "请填写合集名称后自动保存。": "Enter a collection name to save automatically.",
+  "请填写合集名称后自动保存。":
+    "Enter a collection name to save automatically.",
   "请补全成果名称后自动保存。":
     "Complete the deliverable name to save automatically.",
   "请填写有效的成果地址后自动保存。":
@@ -316,7 +318,7 @@ const english: Record<string, string> = {
   "移除 {label}": "Remove {label}",
   "另有 {count} 项：{labels}": "{count} more: {labels}",
   "{count} 项筛选": "{count} selected",
-  正在读取本地对话: "Reading local conversations",
+  正在读取对话: "Reading conversations",
   "正在同步最近的对话状态…": "Syncing recent conversations…",
   "{count} 条对话": "{count} conversations",
   更新于: "Updated",
@@ -376,8 +378,8 @@ const english: Record<string, string> = {
     "The reply could not be confirmed. Check its result in the conversation before submitting again.",
   "确认结果尚未同步，请在原对话核对，避免重复提交。":
     "The confirmation result has not synced. Check the conversation before submitting again.",
-  "本机对话与合集 · 确认操作仅在点击后提交":
-    "Local conversations and collections · Confirmations are sent only when you click",
+  "本地及 SSH 对话 · 仅在点击后提交回复":
+    "Local and SSH conversations · Replies are submitted only when you click",
   等待你的回复: "Waiting for your reply",
   "打开对话：{title}": "Open conversation: {title}",
   阅读状态未知: "Read status unknown",
@@ -435,6 +437,18 @@ const english: Record<string, string> = {
   "当前 Codex 桌面": "Current Codex desktop",
   实时状态服务未连接: "Live status service disconnected",
   对话列表: "Conversation list",
+  最近回复: "Latest reply",
+  发送消息: "Send a message",
+  继续编辑消息: "Continue editing message",
+  给此会话发消息: "Message this conversation",
+  "输入要发送到此会话的内容…": "Type a message for this conversation…",
+  "会话尚未加载或连接已断开，请先打开原对话。":
+    "Open the original conversation to load it or reconnect before sending.",
+  "正在发送…": "Sending…",
+  发送到会话: "Send to conversation",
+  消息已由原会话接收: "Message received by the conversation",
+  本地: "Local",
+  可用: "Available",
   "本机 SQLite · 可用": "Local SQLite · Available",
   不可用: "Unavailable",
   "已读 / 未读": "Read / unread",
@@ -468,8 +482,8 @@ const english: Record<string, string> = {
   兼容连接: "Compatibility connection",
   "正常打开 Codex 后，直接打开看板即可同步，无需重启客户端。":
     "Open Codex normally, then open the board to sync. No client restart is required.",
-  "按当前分页、项目和搜索范围同步本地对话。未加载或无法同步的对话显示为「状态待同步」，离开看板或隐藏面板后停止观察。":
-    "Sync local conversations for the current page, project, and search. Unloaded or unavailable conversations remain Awaiting sync. Observation ends when you leave the board or hide the panel.",
+  "按当前分页、项目和搜索范围同步本地及 SSH 远程对话。未加载或无法同步的对话显示为「状态待同步」，离开看板或隐藏面板后停止观察。":
+    "Sync local and SSH conversations for the current page, project, and search. Unloaded or unavailable conversations remain Awaiting sync. Observation ends when you leave the board or hide the panel.",
   "仅在桌面直连不可用时使用。兼容启动器会以共享模式打开 Codex；若客户端已运行，需要按提示完全退出。":
     "Use this only when direct desktop connection is unavailable. The compatibility launcher opens Codex in shared mode. If the client is already running, quit it when prompted.",
   "连接断开后保留最后快照，并取消实时状态标记；对话执行失败会单独显示。":

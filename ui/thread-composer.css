@@ -1,0 +1,60 @@
+.card-composer {
+  border-top: 1px solid var(--line);
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.card-composer summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+.card-composer form {
+  margin-top: 10px;
+  display: grid;
+  gap: 8px;
+}
+.card-composer textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-height: 80px;
+  resize: vertical;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 8px;
+  font: inherit;
+  color: inherit;
+  background: transparent;
+}
+.card-composer button {
+  justify-self: end;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 10px;
+  font: inherit;
+  cursor: pointer;
+  color: inherit;
+  background: transparent;
+}
+.card-composer button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.card-composer p {
+  margin: 0;
+  color: var(--muted);
+}
+.card-reply {
+  border-top: 1px solid var(--line);
+  padding: 10px 14px;
+  font-size: 12px;
+}
+.card-reply strong {
+  color: var(--muted);
+  font-weight: 500;
+}
+.card-reply p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 160px;
+  overflow: auto;
+  margin: 6px 0 0;
+}

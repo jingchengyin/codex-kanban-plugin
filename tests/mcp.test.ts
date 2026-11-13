@@ -55,7 +55,7 @@ for (const packaged of [false, true]) {
       assert.match(uri, /^ui:\/\/codex-taskboard\/board-[a-f0-9]{16}\.html$/);
       for (const tool of tools)
         assert.equal((tool._meta?.ui as any)?.resourceUri, uri);
-      assert.equal(tools.length, 13);
+      assert.equal(tools.length, 14);
       assert.deepEqual(
         (
           tools.find((tool) => tool.name === "taskboard_open")?._meta?.[
@@ -74,6 +74,7 @@ for (const packaged of [false, true]) {
       );
       const writes = new Set([
         "taskboard_confirmation_reply",
+        "taskboard_message_send",
         "taskboard_open",
         "taskboard_panel",
         "taskboard_work_item_save",
@@ -91,6 +92,7 @@ for (const packaged of [false, true]) {
               tool.name.startsWith("taskboard_work") ||
               tool.name === "taskboard_live_launch" ||
               tool.name === "taskboard_confirmation_reply" ||
+              tool.name === "taskboard_message_send" ||
               tool.name.startsWith("taskboard_artifact_rules"),
           )
           .every((tool) => (tool._meta?.ui as any)?.visibility?.[0] === "app"),

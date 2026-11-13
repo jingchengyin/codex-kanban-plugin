@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh.md)
 
-A workspace for local Codex conversations, collections, and historical usage reviews.
+A workspace for local and SSH Codex conversations, collections, and historical usage reviews.
 
 ## Quick Start
 
@@ -62,11 +62,19 @@ Open Codex normally, then open the board to sync live status. **No client restar
 
 Conversations that are not loaded or whose status is unavailable appear as **Awaiting sync**.
 
+### SSH conversations and board messaging
+
+The board supports conversation lists, host-and-directory project filters, live desktop status, and host-aware links for SSH connections already configured in Codex. The system SSH client reads remote index metadata with existing aliases and credentials; Python 3 is required on the host. It refreshes up to 500 unarchived user conversations per host every 10 seconds. Live status follows existing desktop IPC streams without starting turns. Unloaded or disconnected conversations remain awaiting sync. Remote conversations without a known user-message time sort after known times, by host and index update time; existing local ordering is preserved.
+
+Question choices, free answers, and text messages work through the original local or SSH conversation owner. Idle conversations start another turn; active conversations receive steering input. Existing thread settings are inherited, and acceptance is confirmed from the original conversation's message echo. Cards display the first 2000 characters of the latest reply. Open unloaded conversations before sending.
+
+Remote command/file approvals, collection linking, artifacts, historical usage, and the shared WebSocket compatibility mode are outside this change. Open the original remote conversation for approvals.
+
 ## Features
 
 - **Collections:** Group multiple conversations, add notes, acceptance checklists, and artifact links. Add a conversation to an existing collection from its card, or create a collection with that conversation linked. Click a collection tag to open its editor. Planned, In progress, Awaiting acceptance, and Accepted are set manually; an idle conversation or completed turn does not imply acceptance.
 - **Review:** Review turns from the last 1, 7, or 30 calendar days, filter by project, and summarize known tokens, duration, completed turns, and interruptions, including archived conversations. Missing metrics and unreadable logs are reported separately.
-- **Board and list layouts:** The board groups conversations by status, with each conversation in one column. Local conversations awaiting status sync are included by default. Auto layout uses a compact list at viewport widths of 900px or less; you can also select the board or list manually.
+- **Board and list layouts:** The board groups conversations by status, with each conversation in one column. Local and SSH conversations awaiting status sync are included by default. Auto layout uses a compact list at viewport widths of 900px or less; you can also select the board or list manually.
 - **Confirm on the card:** Once connected, view supported pending commands, file diffs, or structured questions and submit the decisions or answers allowed by the original request. Requests handled on the desktop or cleared by the backend invalidate old buttons. Handle unsupported requests in the original conversation. Replies return to the original conversation.
 - **Needs attention view:** Focus on conversations awaiting your response, unread conversations, and errors, with pending-question summaries or error messages. Waiting time starts when the current connection first observes the wait, not when the question was sent.
 - **Detailed cards:** Model, reasoning effort, plan/default mode, goal status, turn token usage, elapsed time, and the latest user input. Expand Run details in the list to view these metrics.

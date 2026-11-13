@@ -44,6 +44,7 @@ import {
   readSnapshot,
   readThreadArtifacts,
   readWorkspace,
+  sendConversationMessage,
 } from "./client";
 import type {
   ArtifactDiscovery,
@@ -87,6 +88,12 @@ import {
   writeSnapshotCache,
 } from "./snapshot-cache";
 import "./style.css";
+import { matchesProject, projectKey } from "../shared/thread-location";
+import {
+  ThreadComposer,
+  emptyComposer,
+  type ComposerState,
+} from "./thread-composer";
 
 const columns: {
   id: BoardColumn;
@@ -220,6 +227,7 @@ function Board() {
   const [filterOpen, setFilterOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [launching, setLaunching] = useState(false);
+  const [composers, setComposers] = useState<Record<string, ComposerState>>({});
   const inFlight = useRef(false);
   const candidatesRef = useRef<string[]>([]);
   const search = useRef<HTMLInputElement>(null);
@@ -389,8 +397,7 @@ function Board() {
       boardThreads
         .filter(
           (thread) =>
-            (!filters.project?.length ||
-              filters.project.includes(thread.project)) &&
+            matchesProject(thread, filters.project) &&
             matchesQuery(
               thread,
               query,
@@ -418,8 +425,16 @@ function Board() {
   );
   const attentionCount = filtered.filter(needsAttention).length;
   const projects = [
-    ...new Set(boardThreads.map((thread) => thread.project)),
-  ].sort((a, b) => a.localeCompare(b, locale));
+    ...new Map(
+      boardThreads.map((thread) => [
+        projectKey(thread),
+        {
+          id: projectKey(thread),
+          label: `${thread.project} · ${thread.hostName ?? t("本地")} · ${thread.cwd}`,
+        },
+      ]),
+    ).values(),
+  ].sort((a, b) => a.label.localeCompare(b.label, locale));
   const visibleColumns = columns
     .filter((column) => isColumnVisible(column.id, filters.state, scope))
     .filter(
@@ -447,7 +462,10 @@ function Board() {
   );
   // 相同对话集合共用一次批量读取，不随运行状态轮询或排序重启。
   const artifactThreadKey = JSON.stringify(
-    displayed.map((thread) => thread.id).sort(),
+    displayed
+      .filter((thread) => !thread.hostId || thread.hostId === "local")
+      .map((thread) => thread.id)
+      .sort(),
   );
   const observationQueryKey = JSON.stringify({ filters, query, sort });
   const hasSnapshot = snapshot !== null;
@@ -535,6 +553,57 @@ function Board() {
       setToast((e as Error).message);
     }
   };
+  async function sendFromBoard(thread: Thread) {
+    const draft = composers[thread.id]!;
+    setComposers((current) => ({
+      ...current,
+      [thread.id]: { ...draft, busy: true, error: "", sent: false },
+    }));
+    try {
+      await sendConversationMessage({
+        threadId: thread.id,
+        clientUserMessageId: draft.id,
+        text: draft.text,
+      });
+      setComposers((current) => ({
+        ...current,
+        [thread.id]: { ...emptyComposer, sent: true },
+      }));
+    } catch (error) {
+      setComposers((current) => ({
+        ...current,
+        [thread.id]: {
+          ...draft,
+          busy: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "消息发送失败，请在原对话核对。",
+        },
+      }));
+    } finally {
+      void refresh();
+    }
+  }
+  const renderComposer = (thread: Thread) => (
+    <ThreadComposer
+      thread={thread}
+      state={composers[thread.id] ?? emptyComposer}
+      onChange={(text) =>
+        setComposers((current) => ({
+          ...current,
+          [thread.id]: {
+            text,
+            id: crypto.randomUUID(),
+            busy: false,
+            error: "",
+            sent: false,
+          },
+        }))
+      }
+      onSend={() => void sendFromBoard(thread)}
+    />
+  );
 
   /** 保留共享后端启动器，供桌面直连不可用时选择兼容方式。 */
   async function launchLive() {
@@ -745,10 +814,7 @@ function Board() {
                   {
                     id: "project",
                     label: t("项目"),
-                    options: projects.map((project) => ({
-                      id: project,
-                      label: project,
-                    })),
+                    options: projects,
                   },
                 ]}
                 value={filters}
@@ -777,7 +843,7 @@ function Board() {
                 <>
                   <span className={`tiny-dot ${live ? "green" : ""}`} />
                   {loading
-                    ? t("正在读取本地对话")
+                    ? t("正在读取对话")
                     : t("{count} 条对话", { count: displayed.length })}
                 </>
               )}
@@ -838,9 +904,7 @@ function Board() {
               <ThinkingLoader
                 phases={[
                   t(
-                    syncingThreads
-                      ? "正在同步最近的对话状态…"
-                      : "正在读取本地对话",
+                    syncingThreads ? "正在同步最近的对话状态…" : "正在读取对话",
                   ),
                 ]}
                 phase={0}
@@ -870,6 +934,7 @@ function Board() {
           ) : listLayout ? (
             <ConversationList
               threads={displayed}
+              renderComposer={renderComposer}
               onOpen={open}
               confirmations={snapshot?.confirmations}
               onConfirmationSubmitted={() => void refresh()}
@@ -896,6 +961,7 @@ function Board() {
                     belongsToColumn(thread, column.id, scope),
                   )}
                   onOpen={(thread) => void open(thread)}
+                  renderComposer={renderComposer}
                   confirmations={snapshot?.confirmations}
                   onConfirmationSubmitted={() => void refresh()}
                   unreadAvailable={snapshot?.sources.unread ?? false}
@@ -920,7 +986,9 @@ function Board() {
         >
           <WorkItems
             active={view === "items"}
-            threads={boardThreads}
+            threads={boardThreads.filter(
+              (thread) => !thread.hostId || thread.hostId === "local",
+            )}
             artifactRevision={artifactRevision}
             onChanged={updateWorkspace}
             openItem={workItems.find((item) => item.id === openItemId) ?? null}
@@ -990,6 +1058,12 @@ function Board() {
             </div>
           </div>
           <p className="settings-note">
+            {snapshot?.sources.remoteHosts?.map((host) => (
+              <span key={host.hostId} style={{ display: "block" }}>
+                SSH · {host.name} ·{" "}
+                {host.available ? t("可用") : `${t("不可用")} · ${host.error}`}
+              </span>
+            ))}
             {t(snapshot?.sources.unreadReason ?? "正在检查数据源")}
             {t("。未读记录属于客户端内部格式，兼容性可能随版本变化。")}
           </p>
@@ -1002,7 +1076,7 @@ function Board() {
           </p>
           <p className="settings-note">
             {t(
-              "按当前分页、项目和搜索范围同步本地对话。未加载或无法同步的对话显示为「状态待同步」，离开看板或隐藏面板后停止观察。",
+              "按当前分页、项目和搜索范围同步本地及 SSH 远程对话。未加载或无法同步的对话显示为「状态待同步」，离开看板或隐藏面板后停止观察。",
             )}
           </p>
           <h3>{t("兼容连接")}</h3>
@@ -1034,7 +1108,7 @@ function Board() {
           </p>
           <div className="data-boundary">
             <ShieldCheck size={16} />
-            <span>{t("本机对话与合集 · 确认操作仅在点击后提交")}</span>
+            <span>{t("本地及 SSH 对话 · 仅在点击后提交回复")}</span>
           </div>
         </Modal>
       )}
@@ -1056,6 +1130,7 @@ function Board() {
 }
 
 type CardActions = {
+  renderComposer: (thread: Thread) => React.ReactNode;
   confirmations?: Confirmations;
   onConfirmationSubmitted: () => void;
   onOpen: (thread: Thread) => void;
@@ -1080,6 +1155,7 @@ function ThreadCard({
   onOpenItem,
   confirmations,
   onConfirmationSubmitted,
+  renderComposer,
 }: CardActions & { thread: Thread; compact?: boolean }) {
   const { language, locale, t } = useI18n();
   const state = columnFor(thread);
@@ -1166,7 +1242,10 @@ function ThreadCard({
           <span className="card-context" id={`thread-context-${thread.id}`}>
             <span className="card-project" title={thread.cwd}>
               <Folder size={12} aria-hidden="true" />
-              <span>{thread.project}</span>
+              <span>
+                {thread.project}
+                {thread.hostName ? ` · ${thread.hostName}` : ""}
+              </span>
             </span>
             {branchLabel && (
               <span
@@ -1269,6 +1348,7 @@ function ThreadCard({
         requests={requests}
         onSubmitted={onConfirmationSubmitted}
       />
+      {renderComposer(thread)}
       {state === "waiting" && !requests.length && (
         <p className="confirmation-fallback">
           {t(
@@ -1308,12 +1388,14 @@ function ThreadCard({
           )}
         </div>
       )}
-      <ThreadWorkItems
-        thread={thread}
-        items={workItems}
-        onAdd={() => onAddItem(thread)}
-        onOpenItem={onOpenItem}
-      />
+      {(!thread.hostId || thread.hostId === "local") && (
+        <ThreadWorkItems
+          thread={thread}
+          items={workItems}
+          onAdd={() => onAddItem(thread)}
+          onOpenItem={onOpenItem}
+        />
+      )}
     </article>
   );
 }

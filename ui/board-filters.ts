@@ -6,6 +6,7 @@ import {
   type Thread,
 } from "../shared/types";
 import type { FilterValue } from "./vendor/affectui/filter-menu";
+import { matchesProject } from "../shared/thread-location";
 
 /** 默认保留所有本地对话，断线或尚未加载时也能继续浏览。 */
 export const DEFAULT_FILTERS: FilterValue = {
@@ -43,6 +44,8 @@ export function matchesQuery(
   return [
     thread.title,
     thread.project,
+    thread.hostName ?? "",
+    thread.cwd,
     thread.id,
     thread.turnUsage?.userInput ?? "",
     ...itemTitles,
@@ -96,8 +99,7 @@ export function matchesFilters(thread: Thread, filters: FilterValue): boolean {
   // 缺少运行状态时使用默认值，显式清空时不匹配任何状态。
   const states = filters.state ?? DEFAULT_FILTERS.state;
   if (!states.includes(columnFor(thread))) return false;
-  if (filters.project?.length && !filters.project.includes(thread.project))
-    return false;
+  if (!matchesProject(thread, filters.project)) return false;
   if (
     filters.read?.length &&
     !filters.read.includes(

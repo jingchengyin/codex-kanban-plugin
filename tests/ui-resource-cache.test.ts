@@ -12,7 +12,7 @@ test("UI resources invalidate cached HTML after a same-version reinstall", async
   const plugin = join(home, "installed plugin");
   await cp(resolve("plugins/codex-kanban-plugin"), plugin, { recursive: true });
   const page = join(plugin, "runtime/ui/index.html");
-  async function inspect(html: string) {
+  async function inspect(html: string, previousUri?: string) {
     await writeFile(page, html);
     const transport = new StdioClientTransport({
       command: process.execPath,
@@ -48,6 +48,18 @@ test("UI resources invalidate cached HTML after a same-version reinstall", async
       const result = await client.readResource({ uri });
       assert.ok("text" in result.contents[0]);
       assert.equal(result.contents[0].text, html);
+      if (previousUri) {
+        const upgraded = await client.readResource({ uri: previousUri });
+        assert.equal(upgraded.contents[0].uri, previousUri);
+        assert.ok("text" in upgraded.contents[0]);
+        assert.equal(upgraded.contents[0].text, html);
+      }
+      await assert.rejects(
+        client.readResource({
+          uri: "ui://codex-taskboard/board-not-a-hash.html",
+        }),
+        /Resource not found/,
+      );
       return uri;
     } finally {
       await client.close();
@@ -55,7 +67,7 @@ test("UI resources invalidate cached HTML after a same-version reinstall", async
   }
   try {
     const old = await inspect("<main>旧版事项，没有图标选择</main>");
-    const updated = await inspect("<main>新版事项，支持图标选择</main>");
+    const updated = await inspect("<main>新版事项，支持图标选择</main>", old);
     const repeated = await inspect("<main>新版事项，支持图标选择</main>");
     assert.notEqual(old, updated);
     assert.equal(updated, repeated);

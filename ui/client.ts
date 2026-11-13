@@ -15,6 +15,8 @@ import type {
 } from "../shared/work-items";
 import type { WorkReview, WorkReviewOptions } from "../shared/work-review";
 import { cachedSnapshot } from "./snapshot-cache";
+import { conversationUrl } from "../shared/thread-location";
+import type { ConversationMessage } from "../shared/messages";
 
 let app: App | null = null;
 let extensions: OpenAIExtensions | null = null;
@@ -112,8 +114,7 @@ export async function readSnapshot(
   return value;
 }
 export async function openConversation(id: string) {
-  if (!/^[0-9a-f-]{36}$/i.test(id)) throw new Error("对话 ID 格式无效");
-  const url = `codex://threads/${id}`;
+  const url = conversationUrl(id);
   if (app) {
     const result = await app.openLink({ url });
     if (result.isError)
@@ -179,6 +180,13 @@ async function workspaceRequest<T>(
 
 export const readWorkspace = () =>
   workspaceRequest<WorkspaceData>("taskboard_workspace", "/api/workspace");
+export const sendConversationMessage = (input: ConversationMessage) =>
+  workspaceRequest<{ submitted: true }>(
+    "taskboard_message_send",
+    "/api/messages/send",
+    input,
+    true,
+  );
 /** 确认按钮复用现有界面工具通道，不发送普通聊天消息。 */
 export const replyToConfirmation = (input: ConfirmationReply) =>
   workspaceRequest<{ submitted: boolean }>(

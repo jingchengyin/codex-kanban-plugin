@@ -10,12 +10,14 @@
         "HOME",
         "PATH",
         "CODEX_HOME",
-        "TASKBOARD_WS_URL"
+        "TASKBOARD_WS_URL",
+        "SSH_AUTH_SOCK",
+        "KRB5CCNAME"
       ],
       "startup_timeout_sec": 180,
       "tool_timeout_sec": 60,
       "env": {
-        "TASKBOARD_BUILD_ID": "dfa307ecde3fe69b8a86e3edcac73872c91d391b60a0116e41ace1dc28b939e8"
+        "TASKBOARD_BUILD_ID": "4a57d996b8e8971234ce49ec025d3219d158463adebf132759f522ce8128cf94"
       }
     }
   }

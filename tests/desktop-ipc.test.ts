@@ -5,6 +5,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DesktopIpc, type DesktopConversation } from "../server/desktop-ipc";
+import { boardThreadId } from "../shared/thread-location";
 
 const thread = "existing-thread";
 const owner = "desktop-window-owner";
@@ -136,6 +137,111 @@ async function fixture() {
     },
   };
 }
+
+test("remote subscriptions preserve host routing, isolate identical IDs, and invalidate on disconnect", async () => {
+  const f = await fixture();
+  const hostId = "remote-ssh-discovered:devbox";
+  const remote = boardThreadId(hostId, thread);
+  try {
+    await f.ready([thread, remote]);
+    await until(
+      () =>
+        f.messages.filter((m) => m.method === "thread-stream-following-changed")
+          .length === 2,
+    );
+    assert.ok(
+      f.messages.some(
+        (m) =>
+          m.params?.hostId === hostId && m.params?.conversationId === thread,
+      ),
+    );
+    f.snapshot({ threadRuntimeStatus: { type: "idle" } });
+    f.send({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      version: 11,
+      sourceClientId: owner,
+      params: {
+        hostId,
+        conversationId: thread,
+        change: {
+          type: "snapshot",
+          revision: 1,
+          conversationState: { threadRuntimeStatus: { type: "active" } },
+        },
+      },
+    });
+    await until(() => !!f.client.get(remote) && !!f.client.get(thread));
+    assert.equal(
+      f.client.get(remote)!.state.threadRuntimeStatus.type,
+      "active",
+    );
+    assert.equal(f.client.get(thread)!.state.threadRuntimeStatus.type, "idle");
+    f.send({
+      type: "broadcast",
+      method: "thread-stream-state-changed",
+      version: 11,
+      sourceClientId: owner,
+      params: {
+        hostId,
+        conversationId: thread,
+        change: {
+          type: "patches",
+          baseRevision: 1,
+          revision: 2,
+          patches: [
+            {
+              op: "replace",
+              path: ["threadRuntimeStatus", "type"],
+              value: "idle",
+            },
+          ],
+        },
+      },
+    });
+    await until(() => f.client.get(remote)?.revision === 2);
+    assert.equal(f.client.get(remote)!.state.threadRuntimeStatus.type, "idle");
+    const reply = f.client.requestOwner(
+      remote,
+      "thread-follower-submit-user-input",
+      { conversationId: thread, requestId: "q", response: { answers: {} } },
+    );
+    await until(() =>
+      f.messages.some((m) => m.method === "thread-follower-submit-user-input"),
+    );
+    const routed = f.messages.find(
+      (m) => m.method === "thread-follower-submit-user-input",
+    );
+    assert.equal(routed.hostId, hostId);
+    assert.equal(routed.params.conversationId, thread);
+    f.send({
+      type: "response",
+      requestId: routed.requestId,
+      resultType: "success",
+      result: { ok: true },
+    });
+    await reply;
+    f.client.watch([remote]);
+    await until(() =>
+      f.messages.some(
+        (m) => m.params?.hostId === "local" && m.params?.following === false,
+      ),
+    );
+    assert.equal(f.client.get(thread), undefined);
+    assert.ok(f.client.get(remote));
+    f.sockets.at(-1)!.destroy();
+    await until(() => f.unavailable.includes(remote));
+    assert.equal(f.client.get(remote), undefined);
+    await until(
+      () =>
+        f.messages.filter(
+          (m) => m.params?.hostId === hostId && m.params?.following,
+        ).length === 2,
+    );
+  } finally {
+    await f.close();
+  }
+});
 
 test("desktop IPC initializes as an observer and applies framed snapshots and Immer patches", async () => {
   const f = await fixture();
